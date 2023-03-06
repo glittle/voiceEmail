@@ -76,21 +76,44 @@ async function authorize () {
     return client;
 }
 
+
+// Create an Express webapp.
 let app = express();
 app.set('port', 8008);
 // app.set('port', (process.env.PORT || 8008));
 
-app.get('/', async (req, res) => {
+app.post('/', async (req, res) => {
     try {
-        var final = await doWork(req.query);
-        res.send(final);
+        console.log('|');
+        console.log('|');
+        console.log('|');
+        console.log('POST', req.query);
+        processIncoming(req, res);
     } catch (error) {
         return error;
     }
 })
 
+app.get('/', async (req, res) => {
+    try {
+        console.log('|');
+        console.log('|');
+        console.log('|');
+        console.log('GET', req.query);
+        processIncoming(req, res);
+    } catch (error) {
+        return error;
+    }
+});
+
+async function processIncoming (req, res) {
+    // res.writeHead(200, { 'Content-Type': 'text/xml' });
+    var final = await doWork(req.query);
+    console.log('--> FINAL', final);
+    res.send(final);
+}
+
 var tempStorage = {};
-const xml = '<?xml version="1.0" encoding="UTF-8"?>';
 
 async function doWork (query) {
     const auth = await authorize();
@@ -111,21 +134,8 @@ async function doWork (query) {
 
 
     // console.log('range', range)
-    try {
-        const final = await main.respondToCall(query, gmail, sheetsApi, tempStorage);
-        console.log(final);
-        return final;
-    } catch (err) {
-        console.log(err);
-        return `${xml}
-<Response>
-  <Say voice="man" language="en-us">
-    Oops! Something went wrong. Here's the error: ${err}
-  </Say>
-  <Hangup/>
-</Response>`;
-    }
-
+    const final = await main.respondToCall(query, gmail, sheetsApi, tempStorage);
+    return final;
 }
 
 
@@ -135,6 +145,5 @@ async function doWork (query) {
 
 // Start the server
 let server = app.listen(app.get('port'), function () {
-    console.log('App listening on port %s at %s', server.address().port, new Date());
-    console.log('Press Ctrl+C to quit.');
+    console.log('App listening on port %s at %s', server.address().port, new Date().toLocaleString());
 });
