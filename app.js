@@ -85,10 +85,12 @@ app.set('port', 8008);
 app.post('/', async (req, res) => {
     try {
         console.log('|');
+        console.log('|', callCount++);
         console.log('|');
-        console.log('|');
-        console.log('POST', req.query);
-        processIncoming(req, res);
+        console.log(Object.keys(req));
+        var params = req.body;
+        console.log('POST', params);
+        processIncoming(params, res);
     } catch (error) {
         return error;
     }
@@ -97,23 +99,25 @@ app.post('/', async (req, res) => {
 app.get('/', async (req, res) => {
     try {
         console.log('|');
+        console.log('|', callCount++);
         console.log('|');
-        console.log('|');
-        console.log('GET', req.query);
-        processIncoming(req, res);
+        var params = req.query;
+        console.log('GET', params);
+        processIncoming(params, res);
     } catch (error) {
         return error;
     }
 });
 
-async function processIncoming (req, res) {
-    // res.writeHead(200, { 'Content-Type': 'text/xml' });
-    var final = await doWork(req.query);
-    console.log('--> FINAL', final);
+async function processIncoming (params, res) {
+    var final = await doWork(params);
+    console.log('--> RESPONSE', final);
+    res.type('text/xml');
     res.send(final);
 }
 
 var tempStorage = {};
+var callCount = 0;
 
 async function doWork (query) {
     const auth = await authorize();
@@ -129,11 +133,6 @@ async function doWork (query) {
 
     });
 
-    // console.log('test', process.env.sheetId)
-
-
-
-    // console.log('range', range)
     const final = await main.respondToCall(query, gmail, sheetsApi, tempStorage);
     return final;
 }
@@ -145,5 +144,6 @@ async function doWork (query) {
 
 // Start the server
 let server = app.listen(app.get('port'), function () {
+    console.log('|');
     console.log('App listening on port %s at %s', server.address().port, new Date().toLocaleString());
 });

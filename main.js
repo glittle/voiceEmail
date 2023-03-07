@@ -1,40 +1,43 @@
-const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const utf8 = require('utf8');
-const quotedPrintable = require('quoted-printable');
 const { Twilio } = require('twilio');
+const VoiceResponse = require('twilio').twiml.VoiceResponse;
+const gmailHelper = require('./gmailHelper');
+
+const utf8 = require('utf8');
 
 const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
-var calendar = require('dayjs/plugin/calendar');
-var utc = require('dayjs/plugin/utc');
+const calendar = require('dayjs/plugin/calendar');
 dayjs.extend(calendar);
 dayjs.extend(utc);
 dayjs.extend(timezone);
-
-dayjs.tz.setDefault('America/Edmonton');
 
 var sheetsApi;
 
 async function respondToCall (query, gmail, api, tempStorage) {
     const twiml = new VoiceResponse();
+    sheetsApi = api;
 
     try {
-        sheetsApi = api;
-
-        const range = (await sheetsApi.spreadsheets.values.get({
+        // get data from the Directory spreadsheet - set to 99 names for now
+        const rows = (await sheetsApi.spreadsheets.values.get({
             spreadsheetId: process.env.sheetId,
             range: "A1:F100"
-        })).data;
+        })).data.values;
 
-        var rows = range.values;
+        // get call info
         const callSid = query.CallSid;
         const callStatus = query.CallStatus;
 
-        // get info from tempStorage
+        // get info from tempStorage?
         var info = tempStorage[callSid];
-        console.log('==>', callStatus, callSid, info || 'No Info', tempStorage);
+        console.log('==>', callStatus, callSid, query.PATH); //, info || 'No Info', tempStorage);
+
         if (info) {
             // must be a returning call
+            console.log('--> returning call');//, info);
+        } else {
+            console.log('--> new call');
         }
 
         switch (callStatus) {
@@ -44,14 +47,16 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 break;
             case 'completed':
                 // the call is over
-                console.log('--> call ended', info);
+                twiml.say(`Bye!`);
 
                 // add a row to the spreadsheet
                 //CallStart	Phone	Name	SID	Log
                 if (info) {
-                    addToLog([info.start, info.callerNum, info.name, info.callSid, info.steps?.join() || query])
+                    addToLog([info.start, info.callerNum, info.name, info.callSid, info.steps?.join()]);
+                    console.log('--> call logged');
                 }
-                return;
+
+                return twiml.toString();
         }
 
 
@@ -108,7 +113,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 callerNum: callerNum,
                 name: callerName,
                 rowNum: rowNum,
-                start: new Date(),
+                start: dayjs().tz('America/Edmonton').format('YYYY-MM-DD HH:mm:ss'),
                 steps: [],
                 msgs: []
             };
@@ -116,7 +121,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         }
 
         // get messages
-        const msgs = await getMessages(gmail, tempStorage);
+        const msgs = await gmailHelper.getMessages(gmail);
 
         console.log('-->', callerName, 'msgs:', msgs.length);
 
@@ -127,20 +132,26 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         if (msgs.length === 0) {
             twiml.say(`No new messages have been received.`);
+            twiml.say(`Goodbye.`);
             twiml.hangup();
         } else {
-            twiml.say(`There are ${msgs.length} new messages for you.`);
-
-            var msg = msgs[0];
-            twiml.say(`#1 - ${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
-
-            twiml.say(`Press 1 to listen, 2 to go to the next.`);
-
-            twiml.gather({
+            const gather = twiml.gather({
                 timeout: 15,
                 numDigits: 1,
-                input: 'speech dtmf'
+                input: 'dtmf',
+                action: query.PATH, // drop the original query string
+                method: 'GET', // force to use GET
             });
+
+            gather.say(`There are ${msgs.length} new messages for you.`);
+
+            var msg = msgs[0];
+            gather.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+
+            gather.say(`Press 1 to listen, 2 to go to the next.`);
+
+            twiml.say(`We didn't receive any answer from you. Bye!`);
+            twiml.hangup();
         }
 
         // say the first message
@@ -179,75 +190,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
         return twiml.toString();
     }
 }
-
-async function getMessages (gmail, tempStorage) {
-    const res = await gmail.users.messages.list({
-        userId: 'me',
-    });
-    const messages = res.data.messages || [];
-
-    // console.log(`Found ${messages.length} message(s).`);
-
-    if (!messages.length) {
-        return [];
-    }
-
-    const result = [];
-    var msgList = await Promise.all(messages.map(async (msgIds) => {
-        var id = msgIds.id;
-        var payload = (await gmail.users.messages.get({
-            auth: gmail.auth,
-            userId: "me",
-            id: id,
-        })).data.payload;
-
-        // console.log('payload', JSON.stringify(payload))
-        var subject = payload.headers.find(h => h.name === 'Subject')?.value;
-        var to = payload.headers.find(h => h.name === 'To')?.value;
-        var simpleTo = to?.replace(/<.*>/, '').trim();
-
-        var from = payload.headers.find(h => h.name === 'From')?.value;
-        var simpleFrom = from?.replace(/<.*>/, '').trim();
-
-        var dateStr = payload.headers.find(h => h.name === 'Date')?.value;
-        //convert dateStr to date using dayjs
-        const date = dayjs(dateStr);
-        const dateAge = dayjs().tz().calendar(date);
-
-        payload.parts.forEach(p => {
-            console.log(p.mimeType, p.body?.data?.length);
-        })
-        var part = payload.parts.find(p => p.mimeType === 'text/plain');
-        var body = part?.body?.data;
-        if (body) {
-            body = Buffer.from(body, 'base64').toString();
-
-            // convert body to spoken text in mp3 format
-            // var mp3 = await textToSpeech(body);
-        }
-
-        return {
-            subject: subject,
-            date: date,
-            dateAge: dateAge,
-            dateSort: date.toDate(),
-            from: from,
-            simpleFrom: simpleFrom,
-            to: to,
-            simpleTo: simpleTo,
-            id: id,
-            body: body,
-        };
-    }));
-
-    // sort msgList by dateSort with oldest first
-    msgList = msgList.sort((a, b) => {
-        return a.dateSort - b.dateSort;
-    });
-
-    return msgList;
-}
-
 
 
 // async function getLabels (gmail) {
