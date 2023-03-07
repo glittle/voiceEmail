@@ -29,22 +29,13 @@ async function respondToCall (query, gmail, api, tempStorage) {
         const callSid = query.CallSid;
         const callStatus = query.CallStatus;
 
+        console.log('==>', callStatus, callSid);
+
         // get info from tempStorage?
         var info = tempStorage[callSid];
-        console.log('==>', callStatus, callSid, query.PATH); //, info || 'No Info', tempStorage);
 
-        if (info) {
-            // must be a returning call
-            console.log('--> returning call');//, info);
-        } else {
-            console.log('--> new call');
-        }
 
         switch (callStatus) {
-            case 'ringing':
-                break;
-            case 'in-progress':
-                break;
             case 'completed':
                 // the call is over
                 twiml.say(`Bye!`);
@@ -52,13 +43,20 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 // add a row to the spreadsheet
                 //CallStart	Phone	Name	SID	Log
                 if (info) {
-                    addToLog([info.start, info.callerNum, info.name, info.callSid, info.steps?.join()]);
+                    addToLog(info);
                     console.log('--> call logged');
                 }
 
                 return twiml.toString();
+
+            default:
+                if (info) {
+                    return handleOngoingCall(query, twiml, info);
+                }
+                break;
         }
 
+        // handle new call
 
         const callerNumRaw = query.Caller;
 
@@ -70,7 +68,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         // reformat caller number from +1xxxxxxxxxx to xxx-xxx-xxxx
         const callerNum = callerNumRaw.replace(/\D/g, '').substr(1).replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3');
 
-        // console log before and after
+        // console log before and after - for initial testing
         console.log('--> callerNum', callerNumRaw, callerNum);
 
         // lookup caller number in range
@@ -85,50 +83,43 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 `);
             twiml.hangup();
             return twiml.toString();
-            //         return `${xml}
-            // <Response>
-            //   <Say voice="man" language="en-us">
-            //     Hello.
-            //     I don't recognize this phone number.
-            //     Please contact Glen to get set up to use this service.
-            //     Goodbye!
-            //   </Say>
-            //   <Hangup/>
-            // </Response>`;
         }
 
         const rowNum = rowIndex + 1;
         const callerRow = rows[rowIndex];
 
+        var now = dayjs().tz('America/Edmonton').format('YYYY-MM-DD HH:mm:ss');
+
+
+        // store info for later
         // get name from 4th column first, then 3rd column
         const callerName = callerRow[3] || callerRow[2];
 
-        // record current time into the 5th column
-        saveToSheetCell("E", rowNum, new Date());
+        info = {
+            callSid: callSid,
+            callerNum: callerNum,
+            name: callerName,
+            rowNum: rowNum,
+            start: now,
+            activeMsg: null,
+            steps: [],
+            msgs: []
+        };
+        tempStorage[callSid] = info;
 
-        // store info for later
-        if (!info) {
-            info = {
-                callSid: callSid,
-                callerNum: callerNum,
-                name: callerName,
-                rowNum: rowNum,
-                start: dayjs().tz('America/Edmonton').format('YYYY-MM-DD HH:mm:ss'),
-                steps: [],
-                msgs: []
-            };
-            tempStorage[callSid] = info;
-        }
+        // record current time into the 5th column - Call Start
+        saveToSheetCell("E", rowNum, now);
 
         // get messages
         const msgs = await gmailHelper.getMessages(gmail);
 
-        console.log('-->', callerName, 'msgs:', msgs.length);
+        console.log('-->', info.name, 'msgs:', msgs.length);
 
         // load them into tempStorage
         info.msgs = msgs;
+        info.steps.push('Msgs ' + msgs.length)
 
-        twiml.say(`Hello ${callerName}.`);
+        twiml.say(`Hello ${info.name}.`);
 
         if (msgs.length === 0) {
             twiml.say(`No new messages have been received.`);
@@ -154,33 +145,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
             twiml.hangup();
         }
 
-        // say the first message
-
-        // twiml.say(`Press 3 to delete the message.`);
-        // twiml.say(`Press 4 to mark the message as read.`);
-        // twiml.say(`Press 5 to mark the message as unread.`);
-        // twiml.say(`Press 6 to archive the message.`);
-        // twiml.say(`Press 7 to unarchive the message.`);
-        // twiml.say(`Press 8 to move the message to the trash.`);
-        // twiml.say(`Press 9 to move the message out of the trash.`);
-        // twiml.say(`Press 0 to skip to the next message.`);
-        // twiml.say(`Press # to end the call.`);
-        // twiml.gather({});
-        // twiml.say(`We didn't receive any answer from you. Bye!`);
-        // twiml.hangup();
-
-
-        //     const result = `${xml}
-        // <Response>
-        //   ${lines.join('')}
-        //   <Gather timeout="15" numDigits="1" input="speech dtmf">
-        //     <Say voice="man" language="en-us">Press 1 to listen to the next message.</Say>
-        //   </Gather>
-        //   <Say voice="man" language="en-us">We didn't receive any answer from you. Bye!</Say>
-        //   <Hangup/>
-        // </Response>`;
-
-        // return result;
         return twiml.toString();
     }
     catch (err) {
@@ -191,23 +155,84 @@ async function respondToCall (query, gmail, api, tempStorage) {
     }
 }
 
+function handleOngoingCall (query, twiml, info) {
+    const digit = query.Digits;
 
-// async function getLabels (gmail) {
-//     const res = await gmail.users.labels.list({
-//         userId: 'me',
-//     });
-//     const labels = res.data.labels;
-//     if (!labels || labels.length === 0) {
-//         console.log('No labels found.');
-//         return 'None found';
-//     }
-//     const result = [];
-//     labels.forEach((label) => {
-//         result.push(`${label.name}`);
-//     });
+    // no digit?  Something is wrong
+    if (!digit) {
+        twiml.say(`Sorry, didn't get your response.  Goodbye.`);
+        twiml.hangup();
+        return twiml.toString();
+    }
 
-//     return 'Labels: ' + result.join(', ');
-// }
+    // get the message
+    var msg = info.msgs[0];
+
+    // if we're already playing a message, handle the response
+    if (info.activeMsg) {
+        switch (digit) {
+            case '1':
+                // play message again
+                twiml.say(info.activeMsg.body);
+                twiml.play({ digits: 'ww' }); // pause for a second
+                twiml.say(`Press 1 to listen again, 2 to go to the next.`);
+                break;
+
+            case '2':
+                // go to next message
+                info.msgs.shift();
+                info.activeMsg = null;
+
+                if (info.msgs.length === 0) {
+                    twiml.say(`No more messages.`);
+                    twiml.say(`Goodbye.`);
+                    twiml.hangup();
+                } else {
+                    msg = info.msgs[0];
+                    twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+                    twiml.say(`Press 1 to listen, 2 to go to the next.`);
+                }
+                break;
+
+            default:
+                twiml.say(`We didn't receive any answer from you. Bye!`);
+                twiml.hangup();
+                break;
+        }
+    } else {
+        switch (digit) {
+            case '1':
+                // play message
+                info.activeMsg = msg;
+                // twiml.play(msg.mediaUrl);
+                twiml.say(msg.body);
+                twiml.play({ digits: 'ww' }); // pause for a second
+                twiml.say(`Press 1 to listen again, 2 to go to the next.`);
+                break;
+
+            case '2':
+                // go to next message
+                info.msgs.shift();
+                if (info.msgs.length === 0) {
+                    twiml.say(`No more messages.`);
+                    twiml.say(`Goodbye.`);
+                    twiml.hangup();
+                } else {
+                    msg = info.msgs[0];
+                    twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+                    twiml.say(`Press 1 to listen, 2 to go to the next.`);
+                }
+                break;
+
+            default:
+                twiml.say(`We didn't receive any answer from you. Bye!`);
+                twiml.hangup();
+                break;
+        }
+    }
+
+    return twiml.toString();
+};
 
 async function saveToSheetCell (col, rowNum, val) {
     // convert to col notation to excel column name
@@ -223,13 +248,15 @@ async function saveToSheetCell (col, rowNum, val) {
     });
 }
 
-async function addToLog (columnsArray) {
+async function addToLog (info) {
+    var line = [info.start, info.callerNum, info.name, info.callSid, info.steps?.join()];
+
     await sheetsApi.spreadsheets.values.append({
         spreadsheetId: process.env.sheetId,
         valueInputOption: "USER_ENTERED",
         range: "'Call Log'!A1",
         requestBody: {
-            values: [columnsArray]
+            values: [line]
         }
     });
 }
