@@ -14,6 +14,7 @@ dayjs.extend(timezone);
 
 var sheetsApi;
 
+/// return final XML text to send or with MP3 audio
 async function respondToCall (query, gmail, api, tempStorage) {
     const twiml = new VoiceResponse();
     sheetsApi = api;
@@ -32,10 +33,39 @@ async function respondToCall (query, gmail, api, tempStorage) {
         console.log('==>', callStatus, callSid);
 
         // get info from tempStorage?
-        var info = tempStorage[callSid];
-
+        var info = tempStorage.calls[callSid];
 
         switch (callStatus) {
+            case 'playAudio':
+                const msgId = query.id;
+                const msgNum = info.msgs.findIndex(msg => msg.id === msgId);
+                info.steps.push(`(msg ${msgNum})`);
+                const msg = info.msgs[msgNum];
+
+                var mp3 = msg.mp3;
+                if (!mp3) {
+                    console.log('--> getting audio from google speech to text');
+                    try {
+                        const [response] = await msg.bodyDetails.audioPromise;
+                        mp3 = response.audioContent
+                        msg.mp3 = mp3;
+                    } catch (err) {
+                        console.log('error A', err);
+                    }
+                }
+
+                if (!mp3) {
+                    twiml.say('Sorry, there was an error getting the audio for this message.');
+                    return twiml.toString();
+                }
+
+                console.log('--> SENDING MP3', msgNum, msg.mp3.length);
+
+                return {
+                    isAudio: true,
+                    audio: mp3
+                };
+
             case 'completed':
                 // the call is over
                 twiml.say(`Bye!`);
@@ -101,23 +131,26 @@ async function respondToCall (query, gmail, api, tempStorage) {
             name: callerName,
             rowNum: rowNum,
             start: now,
-            activeMsg: null,
+            msgNum: 0, // index of msgs array
             steps: [],
             msgs: []
         };
-        tempStorage[callSid] = info;
+        tempStorage.calls[callSid] = info;
 
         // record current time into the 5th column - Call Start
         saveToSheetCell("E", rowNum, now);
 
         // get messages
-        const msgs = await gmailHelper.getMessages(gmail);
+        const urlPrefix = `${query.PATH}?CallSid=${info.callSid}&CallStatus=playAudio&id=`;
+
+        const msgs = await gmailHelper.getMessages(gmail, tempStorage.msgs, urlPrefix);
 
         console.log('-->', info.name, 'msgs:', msgs.length);
 
         // load them into tempStorage
         info.msgs = msgs;
-        info.steps.push('Msgs ' + msgs.length)
+        info.steps.push(msgs.length + ' msgs');
+        // console.log('Msgs', msgs, msgs[0].bodyDetails.audioPromise);
 
         twiml.say(`Hello ${info.name}.`);
 
@@ -136,10 +169,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
             gather.say(`There are ${msgs.length} new messages for you.`);
 
-            var msg = msgs[0];
-            gather.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
-
-            gather.say(`Press 1 to listen, 2 to go to the next.`);
+            playMessage(gather, info);
 
             twiml.say(`We didn't receive any answer from you. Bye!`);
             twiml.hangup();
@@ -155,6 +185,23 @@ async function respondToCall (query, gmail, api, tempStorage) {
     }
 }
 
+async function playMessage (gather, info) {
+    console.log('--> playMessage', info.msgNum);
+
+    var msg = info.msgs[info.msgNum];
+
+    if (!msg) {
+        return;
+    }
+
+    gather.say(`Message ${info.msgNum + 1}: ${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+    // gather.say(msg.bodyText);
+    gather.play(msg.bodyUrl);
+    gather.play({ digits: 'ww' }); // pause for a second
+
+    gather.say(`Press 1 to listen again, 2 to go to the next, 0 for instructions.`);
+}
+
 function handleOngoingCall (query, twiml, info) {
     const digit = query.Digits;
 
@@ -165,70 +212,84 @@ function handleOngoingCall (query, twiml, info) {
         return twiml.toString();
     }
 
+    info.steps.push(`>${digit}`);
+
     // get the message
     var msg = info.msgs[0];
 
-    // if we're already playing a message, handle the response
-    if (info.activeMsg) {
-        switch (digit) {
-            case '1':
-                // play message again
-                twiml.say(info.activeMsg.body);
-                twiml.play({ digits: 'ww' }); // pause for a second
-                twiml.say(`Press 1 to listen again, 2 to go to the next.`);
-                break;
+    const gather = twiml.gather({
+        timeout: 15,
+        numDigits: 1,
+        input: 'dtmf',
+        action: query.PATH, // drop the original query string
+        method: 'GET', // force to use GET
+    });
 
-            case '2':
-                // go to next message
-                info.msgs.shift();
-                info.activeMsg = null;
 
-                if (info.msgs.length === 0) {
-                    twiml.say(`No more messages.`);
-                    twiml.say(`Goodbye.`);
-                    twiml.hangup();
-                } else {
-                    msg = info.msgs[0];
-                    twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
-                    twiml.say(`Press 1 to listen, 2 to go to the next.`);
-                }
-                break;
+    switch (digit) {
+        case '0':
+            // provide instructions
+            gather.say(`Press 1 to listen to the first message or repeat the message you are on.
+                        Press 2 to go to the next message.
+                        Press 3 to go to the previous message.
+                        Press 0 to repeat these instructions.
+                        Hang up at any time to end the call.`);
+            return twiml.toString();
 
-            default:
-                twiml.say(`We didn't receive any answer from you. Bye!`);
+        case '1':
+            playMessage(gather, info);
+            break;
+
+        case '2':
+            // go to next message
+            if (info.msgNum < info.msgs.length - 1) {
+                info.msgNum++;
+                playMessage(gather, info);
+            } else {
+                gather.say(`No more messages.`);
+            }
+            break;
+
+        case '3':
+            // go to previous message
+            if (info.msgNum > 0) {
+                info.msgNum--;
+                playMessage(gather, info);
+            } else {
+                gather.say(`No previous messages.`);
+            }
+
+            break;
+
+        default:
+            twiml.say(`We didn't receive any answer from you. Bye!`);
+            twiml.hangup();
+            break;
+    }
+
+    switch (digit) {
+        case '1':
+
+            break;
+
+        case '2':
+            // go to next message
+            info.msgs.shift();
+            if (info.msgs.length === 0) {
+                twiml.say(`No more messages.`);
+                twiml.say(`Goodbye.`);
                 twiml.hangup();
-                break;
-        }
-    } else {
-        switch (digit) {
-            case '1':
-                // play message
-                info.activeMsg = msg;
-                // twiml.play(msg.mediaUrl);
-                twiml.say(msg.body);
-                twiml.play({ digits: 'ww' }); // pause for a second
-                twiml.say(`Press 1 to listen again, 2 to go to the next.`);
-                break;
+            } else {
+                msg = info.msgs[0];
+                twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+                twiml.say(`Press 1 to listen, 2 to go to the next.`);
+            }
+            break;
 
-            case '2':
-                // go to next message
-                info.msgs.shift();
-                if (info.msgs.length === 0) {
-                    twiml.say(`No more messages.`);
-                    twiml.say(`Goodbye.`);
-                    twiml.hangup();
-                } else {
-                    msg = info.msgs[0];
-                    twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
-                    twiml.say(`Press 1 to listen, 2 to go to the next.`);
-                }
-                break;
-
-            default:
-                twiml.say(`We didn't receive any answer from you. Bye!`);
-                twiml.hangup();
-                break;
-        }
+        default:
+            twiml.say(`We didn't receive any answer from you. Bye!`);
+            twiml.hangup();
+            break;
     }
 
     return twiml.toString();
@@ -236,11 +297,10 @@ function handleOngoingCall (query, twiml, info) {
 
 async function saveToSheetCell (col, rowNum, val) {
     // convert to col notation to excel column name
-    var colName = String.fromCharCode(64 + rowNum);
 
     await sheetsApi.spreadsheets.values.update({
         spreadsheetId: process.env.sheetId,
-        range: colName + rowNum,
+        range: col + rowNum,
         valueInputOption: "USER_ENTERED",
         requestBody: {
             values: [[val]]
@@ -249,7 +309,7 @@ async function saveToSheetCell (col, rowNum, val) {
 }
 
 async function addToLog (info) {
-    var line = [info.start, info.callerNum, info.name, info.callSid, info.steps?.join()];
+    var line = [info.start, info.callerNum, info.name, info.callSid, info.steps?.join(', ')];
 
     await sheetsApi.spreadsheets.values.append({
         spreadsheetId: process.env.sheetId,
@@ -260,9 +320,6 @@ async function addToLog (info) {
         }
     });
 }
-
-
-
 
 module.exports = {
     respondToCall: respondToCall

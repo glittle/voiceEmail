@@ -16,6 +16,7 @@ const {
 const SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/cloud-platform',
 ];
 // The file token.json stores the user's access and refresh tokens, and is
 // created automatically when the authorization flow completes for the first
@@ -80,7 +81,6 @@ async function authorize () {
 // Create an Express webapp.
 let app = express();
 app.set('port', 8008);
-// app.set('port', (process.env.PORT || 8008));
 
 app.post('/', async (req, res) => {
     try {
@@ -89,9 +89,10 @@ app.post('/', async (req, res) => {
         console.log('|');
         console.log(Object.keys(req));
         var params = req.body;
-        console.log('POST', params);
+        // console.log('POST', params);
         processIncoming(params, res);
     } catch (error) {
+        console.log('error C', error);
         return error;
     }
 })
@@ -102,21 +103,34 @@ app.get('/', async (req, res) => {
         console.log('|', callCount++);
         console.log('|');
         var params = req.query;
-        console.log('GET', params);
+        // console.log('GET', params);
         processIncoming(params, res);
     } catch (error) {
+        console.log('error B', error);
         return error;
     }
 });
 
 async function processIncoming (params, res) {
+    // final will be text or an object with the audio
     var final = await doWork(params);
+
+    if (final.isAudio) {
+        res.type('audio/mpeg');
+        res.send(final.audio);
+        console.log('sent audio');
+        return;
+    }
+
     console.log('--> RESPONSE', final);
     res.type('text/xml');
     res.send(final);
 }
 
-var tempStorage = {};
+var tempStorage = {
+    calls: {},
+    msgs: {}
+};
 var callCount = 0;
 
 async function doWork (query) {

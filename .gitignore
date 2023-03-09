@@ -104,3 +104,4 @@ dist
 .tern-port
 credentials.json
 token.json
+voice-email-*.json
