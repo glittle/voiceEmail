@@ -1,4 +1,4 @@
-const textToSpeech = require('@google-cloud/text-to-speech');
+// const textToSpeech = require('@google-cloud/text-to-speech');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
@@ -20,7 +20,7 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
         return [];
     }
 
-    const tts = new textToSpeech.TextToSpeechClient();
+    // const tts = new textToSpeech.TextToSpeechClient();
 
     const result = [];
     var msgList = await Promise.all(messages.map(async (msgIds) => {
@@ -57,7 +57,7 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
         const dateAge = date.tz('America/Edmonton').calendar();
 
         // const start = new Date().getTime();
-        var bodyDetails = await getBodyDetails(payload, tts); // promise
+        var bodyDetails = await getBodyDetails(payload); // promise
         // const elapsed = new Date().getTime() - start;
         // console.log('got email body', id, elapsed, 'ms', bodyDetails.text.length, 'chars', bodyDetails.audio.length, 'bytes')
 
@@ -88,7 +88,7 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
     return msgList;
 }
 
-async function getBodyDetails (payload, tts) {
+async function getBodyDetails (payload) {
     var body = '';
     if (payload.parts) {
         payload.parts.forEach(part => {
@@ -123,14 +123,14 @@ async function getBodyDetails (payload, tts) {
     var textForSpeech = body;
     textForSpeech = textForSpeech.replace(/\n\n/g, '<break time="750ms"/>');
 
-    // convert text to MP3
-    const request = {
-        input: { text: textForSpeech },
-        // Select the language and SSML voice gender (optional)
-        voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
-        // select the type of audio encoding
-        audioConfig: { audioEncoding: 'MP3' },
-    };
+    // // convert text to MP3
+    // const request = {
+    //     input: { text: textForSpeech },
+    //     // Select the language and SSML voice gender (optional)
+    //     voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
+    //     // select the type of audio encoding
+    //     audioConfig: { audioEncoding: 'MP3' },
+    // };
 
     // Performs the text-to-speech request
     // const [response] = await tts.synthesizeSpeech(request);
@@ -143,7 +143,7 @@ async function getBodyDetails (payload, tts) {
 
     return {
         text: body,
-        audioPromise: tts.synthesizeSpeech(request),
+        textForSpeech: textForSpeech,
     };
 }
 

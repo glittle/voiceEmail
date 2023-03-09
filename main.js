@@ -1,5 +1,6 @@
 const { Twilio } = require('twilio');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
+const textToSpeech = require('@google-cloud/text-to-speech');
 const gmailHelper = require('./gmailHelper');
 
 const utf8 = require('utf8');
@@ -44,10 +45,19 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
                 var mp3 = msg.mp3;
                 if (!mp3) {
+                    // convert text to MP3
+                    const tts = new textToSpeech.TextToSpeechClient();
+                    const request = {
+                        input: { text: msg.bodyDetails.textForSpeech },
+                        // Select the language and SSML voice gender (optional)
+                        voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
+                        // select the type of audio encoding
+                        audioConfig: { audioEncoding: 'MP3' },
+                    };
                     console.log('--> getting audio from google speech to text');
                     try {
-                        const [response] = await msg.bodyDetails.audioPromise;
-                        mp3 = response.audioContent
+                        const [response] = await tts.synthesizeSpeech(request);
+                        mp3 = response.audioContent;
                         msg.mp3 = mp3;
                     } catch (err) {
                         console.log('error A', err);
@@ -59,7 +69,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     return twiml.toString();
                 }
 
-                console.log('--> SENDING MP3', msgNum, msg.mp3.length);
+                console.log('--> SENDING MP3', msgNum, mp3.length);
 
                 return {
                     isAudio: true,
