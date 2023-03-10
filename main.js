@@ -39,16 +39,18 @@ async function respondToCall (query, gmail, api, tempStorage) {
         switch (callStatus) {
             case 'playAudio':
                 const msgId = query.id;
-                const msgNum = info.msgs.findIndex(msg => msg.id === msgId);
-                info.steps.push(`(msg ${msgNum})`);
-                const msg = info.msgs[msgNum];
+                const msgIndex = info.msgs.findIndex(msg => msg.id === msgId);
+                info.steps.push(`(msg ${msgIndex})`);
+                const msg = info.msgs[msgIndex];
+                console.log('--> GET MP3', query.id, msgIndex, msg.mp3?.length,
+                    info.msgs.map(m => m.id).join(', '));
 
                 var mp3 = msg.mp3;
                 if (!mp3) {
                     // convert text to MP3
                     const tts = new textToSpeech.TextToSpeechClient();
                     const request = {
-                        input: { text: msg.bodyDetails.textForSpeech },
+                        input: { text: msg.bodyDetails.text }, //msg.bodyDetails.textForSpeech },
                         // Select the language and SSML voice gender (optional)
                         voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
                         // select the type of audio encoding
@@ -56,9 +58,18 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     };
                     console.log('--> getting audio from google speech to text');
                     try {
+                        // start timer
+                        const start = Date.now();
+
+                        // Performs the text-to-speech request
                         const [response] = await tts.synthesizeSpeech(request);
                         mp3 = response.audioContent;
                         msg.mp3 = mp3;
+
+                        // end timer
+                        const end = Date.now();
+                        console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
+
                     } catch (err) {
                         console.log('error A', err);
                     }
@@ -69,7 +80,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     return twiml.toString();
                 }
 
-                console.log('--> SENDING MP3', msgNum, mp3.length);
+                console.log('--> SENDING MP3', msgIndex, mp3.length);
 
                 return {
                     isAudio: true,
@@ -141,7 +152,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             name: callerName,
             rowNum: rowNum,
             start: now,
-            msgNum: 0, // index of msgs array
+            currentMsgNum: 0, // index of msgs array
             steps: [],
             msgs: []
         };
@@ -181,6 +192,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
             playMessage(gather, info);
 
+
             twiml.say(`We didn't receive any answer from you. Bye!`);
             twiml.hangup();
         }
@@ -196,20 +208,37 @@ async function respondToCall (query, gmail, api, tempStorage) {
 }
 
 async function playMessage (gather, info) {
-    console.log('--> playMessage', info.msgNum);
+    console.log('--> playMessage', info.currentMsgNum);
 
-    var msg = info.msgs[info.msgNum];
+    var msg = info.msgs[info.currentMsgNum];
 
     if (!msg) {
+        gather.say(`Sorry, there was an error getting that message.`);
         return;
     }
 
-    gather.say(`Message ${info.msgNum + 1}: ${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
+    // count words and round to nearest 100
+    var wordCount = Math.round(msg.bodyDetails.text.split(' ').length / 100) * 100;
+
+    gather.say(`Message ${info.currentMsgNum + 1}: ${msg.dateAge}
+    From: "${msg.simpleFrom}"
+    With subject: "${msg.subject}"
+    About ${wordCount} words long`);
+    if (info.attachments) {
+        gather.say(`with ${info.attachments.length} attachments.`);
+    }
+
     // gather.say(msg.bodyText);
+
     gather.play(msg.bodyUrl);
     gather.play({ digits: 'ww' }); // pause for a second
 
-    gather.say(`Press 1 to listen again, 2 to go to the next, 0 for instructions.`);
+    var isLast = info.currentMsgNum === info.msgs.length - 1;
+    if (isLast) {
+        gather.say(`That was the last message. Press 2 to listen again, 0 for instructions.`);
+    } else {
+        gather.say(`Press 2 to listen again, 3 to go to the next message, 0 for instructions.`);
+    }
 }
 
 function handleOngoingCall (query, twiml, info) {
@@ -235,35 +264,15 @@ function handleOngoingCall (query, twiml, info) {
         method: 'GET', // force to use GET
     });
 
-
     switch (digit) {
         case '0':
-            // provide instructions
-            gather.say(`Press 1 to listen to the first message or repeat the message you are on.
-                        Press 2 to go to the next message.
-                        Press 3 to go to the previous message.
-                        Press 0 to repeat these instructions.
-                        Hang up at any time to end the call.`);
-            return twiml.toString();
+            sayInstructions(gather);
+            break;
 
         case '1':
-            playMessage(gather, info);
-            break;
-
-        case '2':
-            // go to next message
-            if (info.msgNum < info.msgs.length - 1) {
-                info.msgNum++;
-                playMessage(gather, info);
-            } else {
-                gather.say(`No more messages.`);
-            }
-            break;
-
-        case '3':
             // go to previous message
-            if (info.msgNum > 0) {
-                info.msgNum--;
+            if (info.currentMsgNum > 0) {
+                info.currentMsgNum--;
                 playMessage(gather, info);
             } else {
                 gather.say(`No previous messages.`);
@@ -271,39 +280,35 @@ function handleOngoingCall (query, twiml, info) {
 
             break;
 
-        default:
-            twiml.say(`We didn't receive any answer from you. Bye!`);
-            twiml.hangup();
-            break;
-    }
-
-    switch (digit) {
-        case '1':
-
-            break;
-
         case '2':
+            playMessage(gather, info);
+            break;
+
+        case '3':
             // go to next message
-            info.msgs.shift();
-            if (info.msgs.length === 0) {
-                twiml.say(`No more messages.`);
-                twiml.say(`Goodbye.`);
-                twiml.hangup();
+            if (info.currentMsgNum < info.msgs.length - 1) {
+                info.currentMsgNum++;
+                playMessage(gather, info);
             } else {
-                msg = info.msgs[0];
-                twiml.say(`${msg.dateAge} From "${msg.simpleFrom}" with subject "${msg.subject}"`);
-                twiml.say(`Press 1 to listen, 2 to go to the next.`);
+                gather.say(`No more messages.`);
             }
             break;
 
         default:
-            twiml.say(`We didn't receive any answer from you. Bye!`);
-            twiml.hangup();
+            sayInstructions(gather);
             break;
     }
 
     return twiml.toString();
 };
+
+function sayInstructions (gather) {
+    gather.say(`Press 2 to repeat the message you are on.
+                        Press 3 to go to the next message.
+                        Press 1 to go to the previous message.
+                        Press 0 to repeat these instructions.
+                        Hang up at any time to end the call.`);
+}
 
 async function saveToSheetCell (col, rowNum, val) {
     // convert to col notation to excel column name

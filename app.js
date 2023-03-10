@@ -85,7 +85,7 @@ app.set('port', 8008);
 app.post('/', async (req, res) => {
     try {
         console.log('|');
-        console.log('|', callCount++);
+        console.log('| POST', callCount++, new Date().toLocaleString());
         console.log('|');
         console.log(Object.keys(req));
         var params = req.body;
@@ -100,7 +100,7 @@ app.post('/', async (req, res) => {
 app.get('/', async (req, res) => {
     try {
         console.log('|');
-        console.log('|', callCount++);
+        console.log('| GET', callCount++, new Date().toLocaleString());
         console.log('|');
         var params = req.query;
         // console.log('GET', params);

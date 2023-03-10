@@ -52,6 +52,17 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
 
         var dateStr = payload.headers.find(h => h.name === 'Date')?.value;
 
+        // count the number of attachments in the payload
+        var attachments = 0;
+        if (payload.parts) {
+            payload.parts.forEach(part => {
+                if (part.filename) {
+                    attachments++;
+                }
+            });
+        }
+
+
         //convert dateStr to date using dayjs
         const date = dayjs(dateStr);
         const dateAge = date.tz('America/Edmonton').calendar();
@@ -62,6 +73,7 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
         // console.log('got email body', id, elapsed, 'ms', bodyDetails.text.length, 'chars', bodyDetails.audio.length, 'bytes')
 
         var final = {
+            id: id,
             subject: subject,
             date: date,
             dateAge: dateAge,
@@ -70,9 +82,9 @@ async function getMessages (gmail, msgsCache, urlPrefix) {
             simpleFrom: simpleFrom,
             to: to,
             simpleTo: simpleTo,
-            id: id,
             bodyDetails: bodyDetails,
             bodyUrl: urlPrefix + id,
+            attachments: attachments,
         };
 
         msgsCache[id] = final;
@@ -115,13 +127,18 @@ async function getBodyDetails (payload) {
 
 
     // replace [image: xxx] with nothing
-    body = body.replace(/\[image:[^]*?\]/g, '');
+    body = body.replace(/\[image:[^]*?\]/g, '(Image)');
 
     // replace < xxx > with nothing
     body = body.replace(/<[^]*?>/g, '');
 
     var textForSpeech = body;
-    textForSpeech = textForSpeech.replace(/\n\n/g, '<break time="750ms"/>');
+
+    // encode for xml
+    textForSpeech = textForSpeech.replace(/&/g, '&amp;');
+
+    // replace \r\n\r\n with a break
+    textForSpeech = textForSpeech.replace(/\r\n\r\n/g, '<break time="750ms"/>');
 
     // // convert text to MP3
     // const request = {
