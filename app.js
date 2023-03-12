@@ -14,7 +14,9 @@ const {
 
 // If modifying these scopes, delete token.json.
 const SCOPES = [
-    'https://www.googleapis.com/auth/gmail.readonly',
+    // 'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.labels',
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/cloud-platform',
 ];
@@ -128,8 +130,10 @@ async function processIncoming (params, res) {
 }
 
 var tempStorage = {
-    calls: {},
-    msgs: {}
+    calls: {}, // details of each call
+    msgs: {}, // the messages that have been processed
+    clips: [], // mp3 clips for "from" and "subject"
+    labels: [], // the known labels in this gmail account
 };
 var callCount = 0;
 
@@ -140,6 +144,25 @@ async function doWork (query) {
         version: 'v1',
         auth
     });
+
+    if (!tempStorage.labels.length) {
+        const res = await gmail.users.labels.list({
+            userId: 'me',
+        });
+        tempStorage.labels = res.data.labels;
+        // console.log('labels', tempStorage.labels);
+        /*
+        e.g.
+        {
+          id: 'Label_1',
+          name: 'Glen',
+          messageListVisibility: 'show',
+          labelListVisibility: 'labelShow',
+          type: 'user'
+        }
+        */
+
+    }
 
     const sheetsApi = google.sheets({
         version: 'v4',

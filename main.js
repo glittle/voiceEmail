@@ -14,6 +14,7 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 var sheetsApi;
+const tts = new textToSpeech.TextToSpeechClient();
 
 /// return final XML text to send or with MP3 audio
 async function respondToCall (query, gmail, api, tempStorage) {
@@ -24,7 +25,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         // get data from the Directory spreadsheet - set to 99 names for now
         const rows = (await sheetsApi.spreadsheets.values.get({
             spreadsheetId: process.env.sheetId,
-            range: "A1:F100"
+            range: "A1:G100"
         })).data.values;
 
         // get call info
@@ -37,41 +38,36 @@ async function respondToCall (query, gmail, api, tempStorage) {
         var info = tempStorage.calls[callSid];
 
         switch (callStatus) {
-            case 'playAudio':
+            case 'playClip':
+                const code = query.c;
+                const clip = tempStorage.clips.find(c => c.code === code);
+                if (!clip) {
+                    twiml.say('Sorry, there was an error getting the audio clip: ' + code);
+                    return twiml.toString();
+                }
+                console.log('clip', clip);
+                return {
+                    isAudio: true,
+                    audio: clip.mp3
+                };
+
+            case 'playBody':
                 const msgId = query.id;
                 const msgIndex = info.msgs.findIndex(msg => msg.id === msgId);
                 info.steps.push(`(msg ${msgIndex})`);
                 const msg = info.msgs[msgIndex];
-                console.log('--> GET MP3', query.id, msgIndex, msg.mp3?.length,
-                    info.msgs.map(m => m.id).join(', '));
+                console.log('msg', msgId, msgIndex, msg)
+                // console.log('--> GET MP3', query.id, msgIndex, msg.mp3?.length, info.msgs.map(m => m.id).join(', '));
 
                 var mp3 = msg.mp3;
                 if (!mp3) {
                     // convert text to MP3
-                    const tts = new textToSpeech.TextToSpeechClient();
-                    const request = {
-                        input: { text: msg.bodyDetails.text }, //msg.bodyDetails.textForSpeech },
-                        // Select the language and SSML voice gender (optional)
-                        voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
-                        // select the type of audio encoding
-                        audioConfig: { audioEncoding: 'MP3' },
-                    };
-                    console.log('--> getting audio from google speech to text');
-                    try {
-                        // start timer
-                        const start = Date.now();
-
-                        // Performs the text-to-speech request
-                        const [response] = await tts.synthesizeSpeech(request);
-                        mp3 = response.audioContent;
-                        msg.mp3 = mp3;
-
-                        // end timer
-                        const end = Date.now();
-                        console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
-
-                    } catch (err) {
-                        console.log('error A', err);
+                    var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;')
+                    if (!txt) {
+                        twiml.say(`There appears to be no text in this message.`);
+                        return twiml.toString();
+                    } else {
+                        mp3 = msg.mp3 = await makeMp3(txt);
                     }
                 }
 
@@ -81,6 +77,9 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 }
 
                 console.log('--> SENDING MP3', msgIndex, mp3.length);
+
+                // all seems good - mark message as read
+                gmailHelper.setLabel(gmail, msg.id, info.labelId);
 
                 return {
                     isAudio: true,
@@ -102,7 +101,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
             default:
                 if (info) {
-                    return handleOngoingCall(query, twiml, info);
+                    return handleOngoingCall(query, twiml, info, tempStorage);
                 }
                 break;
         }
@@ -145,11 +144,23 @@ async function respondToCall (query, gmail, api, tempStorage) {
         // store info for later
         // get name from 4th column first, then 3rd column
         const callerName = callerRow[3] || callerRow[2];
+        const labelName = callerRow[4];
+
+        // create label if it doesn't exist
+        var labelId = tempStorage.labels.find(l => l.name === labelName)?.id;
+        if (!labelId) {
+            labelId = await gmailHelper.createLabel(gmail, labelName);
+            tempStorage.labels.push({ name: labelName, id: labelId });
+        } else {
+            console.log('--> label already exists', labelName);
+        }
 
         info = {
             callSid: callSid,
             callerNum: callerNum,
             name: callerName,
+            label: labelName,
+            labelId: labelId,
             rowNum: rowNum,
             start: now,
             currentMsgNum: 0, // index of msgs array
@@ -158,13 +169,13 @@ async function respondToCall (query, gmail, api, tempStorage) {
         };
         tempStorage.calls[callSid] = info;
 
-        // record current time into the 5th column - Call Start
-        saveToSheetCell("E", rowNum, now);
+        // record current time into the Last Call column
+        saveToSheetCell("F", rowNum, now);
 
         // get messages
-        const urlPrefix = `${query.PATH}?CallSid=${info.callSid}&CallStatus=playAudio&id=`;
+        const urlPrefix = `${query.PATH}?CallStatus=playBody&CallSid=${info.callSid}&id=`;
 
-        const msgs = await gmailHelper.getMessages(gmail, tempStorage.msgs, urlPrefix);
+        const msgs = await gmailHelper.getMessages(gmail, labelName, tempStorage.msgs, urlPrefix);
 
         console.log('-->', info.name, 'msgs:', msgs.length);
 
@@ -176,10 +187,12 @@ async function respondToCall (query, gmail, api, tempStorage) {
         twiml.say(`Hello ${info.name}.`);
 
         if (msgs.length === 0) {
-            twiml.say(`No new messages have been received.`);
+            twiml.say(`There aren't any new emails for you.`);
             twiml.say(`Goodbye.`);
             twiml.hangup();
         } else {
+            twiml.say('Checking the inbox for you');
+
             const gather = twiml.gather({
                 timeout: 15,
                 numDigits: 1,
@@ -188,12 +201,17 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 method: 'GET', // force to use GET
             });
 
-            gather.say(`There are ${msgs.length} new messages for you.`);
+            // say the number of messages
+            if (msgs.length === 1) {
+                gather.say(`There is 1 new message.`);
+            } else {
+                gather.say(`There are ${msgs.length} new messages.`);
+            }
 
-            playMessage(gather, info);
+            await playMessage(gather, info, query, tempStorage);
 
-
-            twiml.say(`We didn't receive any answer from you. Bye!`);
+            twiml.say(`We didn't receive any answer from you.`);
+            twiml.say(`Good bye!`);
             twiml.hangup();
         }
 
@@ -207,8 +225,37 @@ async function respondToCall (query, gmail, api, tempStorage) {
     }
 }
 
-async function playMessage (gather, info) {
+async function makeMp3 (text) {
+    const request = {
+        input: { text: text },
+        voice: { languageCode: 'en-US', name: 'en-US-News-K' },
+        audioConfig: { audioEncoding: 'MP3' },
+    };
+
+    console.log(`--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 20)}...`);
+    try {
+        // start timer
+        const start = Date.now();
+
+        // Performs the text-to-speech request
+        const [response] = await tts.synthesizeSpeech(request);
+        mp3 = await response.audioContent;
+
+        // end timer
+        const end = Date.now();
+        console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
+
+        return mp3;
+    } catch (err) {
+        console.log('error A', err);
+        return null;
+    }
+}
+
+async function playMessage (gather, info, query, tempStorage) {
     console.log('--> playMessage', info.currentMsgNum);
+
+    const urlPrefix = `${query.PATH}?CallStatus=playClip&CallSid=${info.callSid}&c=`;
 
     var msg = info.msgs[info.currentMsgNum];
 
@@ -217,13 +264,16 @@ async function playMessage (gather, info) {
         return;
     }
 
-    // count words and round to nearest 100
-    var wordCount = Math.round(msg.bodyDetails.text.split(' ').length / 100) * 100;
+    gather.say(`Message ${info.currentMsgNum + 1}: ${msg.dateAge}`);
 
-    gather.say(`Message ${info.currentMsgNum + 1}: ${msg.dateAge}
-    From: "${msg.simpleFrom}"
-    With subject: "${msg.subject}"
-    About ${wordCount} words long`);
+    await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage);
+    await sayPlay(`With Subject: `, msg.subject, urlPrefix, gather, tempStorage);
+
+    // count words and round to nearest 100
+    var wordCount = msg.bodyDetails.textForSpeech.split(' ').length + 1;
+    gather.say(`About ${wordCount} words long`);
+    // console.log('wordCount', wordCount);
+
     if (info.attachments) {
         gather.say(`with ${info.attachments.length} attachments.`);
     }
@@ -235,13 +285,45 @@ async function playMessage (gather, info) {
 
     var isLast = info.currentMsgNum === info.msgs.length - 1;
     if (isLast) {
-        gather.say(`That was the last message. Press 2 to listen again, 0 for instructions.`);
+        gather.say(`That was the last message. Press 2 to listen again, 0 for instructions, or hang up if you are done.`);
     } else {
         gather.say(`Press 2 to listen again, 3 to go to the next message, 0 for instructions.`);
     }
 }
 
-function handleOngoingCall (query, twiml, info) {
+async function sayPlay (prefix, text, urlPrefix, gather, tempStorage) {
+
+    var clip = tempStorage.clips.find(c => c.text === text);
+
+    if (!clip) {
+        var mp3 = await makeMp3(text);
+        if (mp3) {
+
+            // make short random code to avoid collisions
+            var code = Math.random().toString(36).substring(2);
+
+            // make clip
+            clip = {
+                mp3: mp3,
+                text: text,
+                code: code,
+                url: urlPrefix + code
+            };
+            tempStorage.clips.push(clip);
+        }
+    }
+
+    if (clip) {
+        console.log('play -', prefix, text, clip.url)
+        gather.say(prefix);
+        gather.play(clip.url);
+    } else {
+        console.log('say -', prefix, text)
+        gather.say(`${prefix} "${text}"`);
+    }
+}
+
+async function handleOngoingCall (query, twiml, info, tempStorage) {
     const digit = query.Digits;
 
     // no digit?  Something is wrong
@@ -273,7 +355,7 @@ function handleOngoingCall (query, twiml, info) {
             // go to previous message
             if (info.currentMsgNum > 0) {
                 info.currentMsgNum--;
-                playMessage(gather, info);
+                await playMessage(gather, info, query, tempStorage);
             } else {
                 gather.say(`No previous messages.`);
             }
@@ -281,14 +363,14 @@ function handleOngoingCall (query, twiml, info) {
             break;
 
         case '2':
-            playMessage(gather, info);
+            await playMessage(gather, info, query, tempStorage);
             break;
 
         case '3':
             // go to next message
             if (info.currentMsgNum < info.msgs.length - 1) {
                 info.currentMsgNum++;
-                playMessage(gather, info);
+                await playMessage(gather, info, query, tempStorage);
             } else {
                 gather.say(`No more messages.`);
             }
