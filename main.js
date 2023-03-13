@@ -34,6 +34,10 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         console.log('==>', callStatus, callSid);
 
+        if (!callStatus) {
+            return 'invalid request';
+        }
+
         // get info from tempStorage?
         var info = tempStorage.calls[callSid];
 
@@ -45,7 +49,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     twiml.say('Sorry, there was an error getting the audio clip: ' + code);
                     return twiml.toString();
                 }
-                console.log('clip', clip);
+                // console.log('clip', clip);
                 return {
                     isAudio: true,
                     audio: clip.mp3
@@ -56,7 +60,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 const msgIndex = info.msgs.findIndex(msg => msg.id === msgId);
                 info.steps.push(`(msg ${msgIndex})`);
                 const msg = info.msgs[msgIndex];
-                console.log('msg', msgId, msgIndex, msg)
+                // console.log('msg', msgId, msgIndex, msg)
                 // console.log('--> GET MP3', query.id, msgIndex, msg.mp3?.length, info.msgs.map(m => m.id).join(', '));
 
                 var mp3 = msg.mp3;
@@ -103,6 +107,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 if (info) {
                     return handleOngoingCall(query, twiml, info, tempStorage);
                 }
+
                 break;
         }
 
@@ -243,7 +248,7 @@ async function makeMp3 (text) {
 
         // end timer
         const end = Date.now();
-        console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
+        // console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
 
         return mp3;
     } catch (err) {
@@ -358,6 +363,7 @@ async function handleOngoingCall (query, twiml, info, tempStorage) {
                 await playMessage(gather, info, query, tempStorage);
             } else {
                 gather.say(`No previous messages.`);
+                sayInstructions(gather);
             }
 
             break;
@@ -373,6 +379,7 @@ async function handleOngoingCall (query, twiml, info, tempStorage) {
                 await playMessage(gather, info, query, tempStorage);
             } else {
                 gather.say(`No more messages.`);
+                sayInstructions(gather);
             }
             break;
 
