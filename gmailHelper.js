@@ -10,40 +10,69 @@ dayjs.extend(timezone);
 dayjs.extend(relativeTime);
 
 /*
-
 Note: the gmail account being used must have the following settings:
-
 - Conversation mode is OFF
-
 */
 
-async function createLabel (gmail, labelName) {
-    // catch if this crashes
-    try {
-        const res = await gmail.users.labels.create({
-            // auth: gmail.auth,
-            userId: 'me',
-            resource: {
-                name: labelName,
-            }
-        });
-        const label = res.data;
-        console.log('created label', labelName, label.id);
-        return label.id;
-    } catch (e) {
-        console.log('label already created');
-    }
-}
-
 async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
-    const start1 = new Date().getTime();
-    const res = await gmail.users.messages.list({
-        userId: 'me',
-        q: `in:inbox NOT label:${labelName}`,
-    });
-    const messages = res.data.messages || [];
+    var start1 = new Date().getTime();
+    const messages = [];
 
-    console.log(`Found ${messages.length} message(s) in`, new Date().getTime() - start1, 'ms');
+
+    // tried to use Drafts but can't get the content easily. Better to use in:sent
+    // const res0 = await gmail.users.drafts.list({
+    //     userId: 'me',
+    //     q: `NOT label:${labelName}`,
+    // });
+    // console.log('res0', res0.data)
+    // if (res0.data.drafts) {
+    //     messages.push(...res0.data.drafts);
+    // }
+    // var numDrafts = messages.length;
+    // console.log(`Found ${numDrafts} draft(s) in`, new Date().getTime() - start1, 'ms');
+
+    // get sent messages
+    // const res1 = await gmail.users.messages.list({
+    //     userId: 'me',
+    //     q: `in:sent`,// has:yellow-star NOT label:${labelName}`,
+    // });
+    // console.log('res1', res1.data)
+    // if (res1.data.messages) {
+    //     messages.push(...res1.data.messages);
+    // }
+    // var numSent = messages.length - numDrafts;
+    // console.log(`Found ${numSent} sent msg(s) in`, new Date().getTime() - start1, 'ms');
+
+    // get messages in the _Welcome label
+    const res1 = await gmail.users.messages.list({
+        userId: 'me',
+        q: `label:_Welcome NOT label:${labelName}`,
+    });
+    console.log('res1', res1.data)
+    if (res1.data.messages) {
+        messages.push(...res1.data.messages);
+    }
+    var numWelcome = messages.length; // - numDrafts;
+    console.log(`Found ${numWelcome} welcome msg(s) in`, new Date().getTime() - start1, 'ms');
+
+    // get messages from the last 4 days (ignoring the timezone)
+    var cutoffDate = dayjs().subtract(4, 'day').format('YYYY/MM/DD');
+    start1 = new Date().getTime();
+
+    // get this label's messages
+    const res2 = await gmail.users.messages.list({
+        userId: 'me',
+        q: `in:inbox after:${cutoffDate} NOT label:${labelName}`,
+    });
+    console.log('res2', res2.data)
+
+    // add the res messages to the messages array
+    if (res2.data.messages) {
+        messages.push(...res2.data.messages);
+    }
+    var numMessages = messages.length;
+
+    console.log(`Found ${numMessages} total message(s) in`, new Date().getTime() - start1, 'ms');
 
     if (!messages.length) {
         return [];
@@ -63,15 +92,26 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
             return cached;
         }
 
-        console.log('get email', id);
         var startTime = new Date().getTime();
-        var payload = (await gmail.users.messages.get({
-            auth: gmail.auth,
-            userId: "me",
-            id: id,
-        })).data.payload;
-        // console.log('get email', id, 'took', new Date().getTime() - startTime, 'ms');
+        var payload;
+        if (id.startsWith('r-')) {
+            console.log('get draft', id);
+            payload = (await gmail.users.drafts.get({
+                auth: gmail.auth,
+                userId: "me",
+                id: id,
+            })).data.message.payload;
 
+            // console.log('draft', payload);
+
+        } else {
+            console.log('get message', id);
+            payload = (await gmail.users.messages.get({
+                auth: gmail.auth,
+                userId: "me",
+                id: id,
+            })).data.payload;
+        }
         // console.log('payload', JSON.stringify(payload))
         var subject = payload.headers.find(h => h.name === 'Subject')?.value;
         console.log('get email Subject:', subject);
@@ -237,19 +277,52 @@ async function getBodyDetails (payload) {
 
 async function setLabel (gmail, id, labelId) {
     try {
-        await gmail.users.messages.modify({
-            auth: gmail.auth,
-            userId: 'me',
-            id: id,
-            resource: {
-                addLabelIds: [labelId],
-            }
-        });
-        console.log('set label', labelId);
+        /// --> Can't change labels on drafts!
+        if (id.startsWith('r-')) {
+            //     await gmail.users.drafts.modify({
+            //         auth: gmail.auth,
+            //         userId: 'me',
+            //         id: id,
+            //         resource: {
+            //             addLabelIds: [labelId],
+            //         }
+            //     });
+            //     console.log('set label on draft', labelId);
+        } else {
+            await gmail.users.messages.modify({
+                auth: gmail.auth,
+                userId: 'me',
+                id: id,
+                resource: {
+                    addLabelIds: [labelId],
+                }
+            });
+            console.log('set label on msg', labelId);
+        }
     } catch (e) {
         console.log('error setting label', e);
     }
 }
+
+
+async function createLabel (gmail, labelName) {
+    // catch if this crashes
+    try {
+        const res = await gmail.users.labels.create({
+            // auth: gmail.auth,
+            userId: 'me',
+            resource: {
+                name: labelName,
+            }
+        });
+        const label = res.data;
+        console.log('created label', labelName, label.id);
+        return label.id;
+    } catch (e) {
+        console.log('label already created');
+    }
+}
+
 
 module.exports = {
     getMessages: getMessages,

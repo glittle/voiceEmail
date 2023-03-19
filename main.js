@@ -97,6 +97,18 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 // add a row to the spreadsheet
                 //CallStart	Phone	Name	SID	Log
                 if (info) {
+                    if (info.startMs) {
+                        var duration = (new Date().getTime() - info.startMs) / 1000;
+
+                        // show time in mins if > 1 min
+                        if (duration > 60) {
+                            duration = Math.round(duration / 60) + ' min';
+                        } else {
+                            duration = Math.round(duration) + ' sec';
+                        }
+
+                        info.steps.push(duration);
+                    }
                     addToLog(info);
                     console.log('--> call logged');
                 }
@@ -125,6 +137,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         // console log before and after - for initial testing
         console.log('--> callerNum', callerNumRaw, callerNum);
+        var now = dayjs().tz('America/Edmonton').format('YYYY-MM-DD HH:mm:ss');
+        var nowMs = new Date().getTime();
 
         // lookup caller number in range
         const rowIndex = rows.findIndex(row => row[0] === callerNum);
@@ -137,13 +151,19 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 Goodbye!
                 `);
             twiml.hangup();
+
+            addToLog({
+                start: now, name: '??', callerNum, callSid
+            });
+            // var line = [info.start, info.callerNum, info.name, info.callSid, info.steps?.join(', ')];
+
+
             return twiml.toString();
         }
 
         const rowNum = rowIndex + 1;
         const callerRow = rows[rowIndex];
 
-        var now = dayjs().tz('America/Edmonton').format('YYYY-MM-DD HH:mm:ss');
 
 
         // store info for later
@@ -160,6 +180,15 @@ async function respondToCall (query, gmail, api, tempStorage) {
             console.log('--> label already exists', labelName);
         }
 
+        // add another label with "{labelName} Save" and get the labelId
+        var saveLabelId = tempStorage.labels.find(l => l.name === labelName + ' Save')?.id;
+        if (!saveLabelId) {
+            saveLabelId = await gmailHelper.createLabel(gmail, labelName + ' Save');
+            tempStorage.labels.push({ name: labelName + ' Save', id: saveLabelId });
+        } else {
+            console.log('--> save label already exists', labelName + ' Save');
+        }
+
         info = {
             callSid: callSid,
             callerNum: callerNum,
@@ -168,7 +197,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
             labelId: labelId,
             rowNum: rowNum,
             start: now,
-            currentMsgNum: 0, // index of msgs array
+            startMs: nowMs,
+            currentMsgNum: -1, // index of msgs array
             steps: [],
             msgs: []
         };
@@ -192,8 +222,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
         twiml.say(`Hello ${info.name}.`);
 
         if (msgs.length === 0) {
-            twiml.say(`There aren't any new emails for you.`);
-            twiml.say(`Goodbye.`);
+            twiml.say(`There are no new emails for you.`);
+            twiml.say(`Have a great day!`);
             twiml.hangup();
         } else {
             twiml.say('Checking the inbox for you');
@@ -213,7 +243,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 gather.say(`There are ${msgs.length} new messages.`);
             }
 
-            await playMessage(gather, info, query, tempStorage);
+            // await playMessage(gather, info, query, tempStorage);
+            gather.say(`Press 3 to start listening. Press 0 for instructions.`);
 
             twiml.say(`We didn't receive any answer from you.`);
             twiml.say(`Good bye!`);
@@ -276,8 +307,17 @@ async function playMessage (gather, info, query, tempStorage) {
 
     // count words and round to nearest 100
     var wordCount = msg.bodyDetails.textForSpeech.split(' ').length + 1;
+
+    // if less than 100, round to nearest 10
+    if (wordCount < 100) {
+        wordCount = Math.round(wordCount / 10) * 10;
+    }
+    // if > 100, round to nearest 100
+    else {
+        wordCount = Math.round(wordCount / 100) * 100;
+    }
+
     gather.say(`About ${wordCount} words long`);
-    // console.log('wordCount', wordCount);
 
     if (info.attachments) {
         gather.say(`with ${info.attachments.length} attachments.`);
