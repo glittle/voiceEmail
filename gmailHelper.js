@@ -56,7 +56,7 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
     console.log(`Found ${numWelcome} welcome msg(s) in`, new Date().getTime() - start1, 'ms');
 
     // get messages from the last 4 days (ignoring the timezone)
-    var cutoffDate = dayjs().subtract(4, 'day').format('YYYY/MM/DD');
+    var cutoffDate = dayjs().subtract(7, 'day').format('YYYY/MM/DD');
     start1 = new Date().getTime();
 
     // get this label's messages
