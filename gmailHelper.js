@@ -115,6 +115,7 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
         // console.log('payload', JSON.stringify(payload))
         var subject = payload.headers.find(h => h.name === 'Subject')?.value;
         console.log('get email Subject:', subject);
+        subject = subject.replace('[calgary-bahais] ', '').trim();
 
         var to = payload.headers.find(h => h.name === 'To')?.value;
         var simpleTo = to?.replace(/<.*>/, '').trim();
@@ -174,24 +175,43 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
 
 async function getBodyDetails (payload) {
     var body = '';
+    const debug = false;
+
+    const fnDoPart = (depth, part) => {
+        if (debug) console.log(depth, part.mimeType);
+
+        if (part.mimeType === 'text/plain') {
+            body += ' ' + part.body.data;
+            if (debug) console.log('used part body');
+            return;
+        }
+
+        if (part.mimeType === 'multipart/alternative' || part.mimeType === 'multipart/related') {
+            part.parts.forEach(p => fnDoPart(depth + 1, p));
+        }
+    };
+
+    // if (debug) console.log('parts', payload.parts);
     if (payload.parts) {
-        payload.parts.forEach(part => {
-            // console.log('part', part.mimeType);
-            if (part.mimeType === 'text/plain') {
-                body += ' ' + part.body.data;
-                // console.log('used part body')
-            } else if (part.mimeType === 'multipart/alternative') {
-                part.parts.forEach(part2 => {
-                    // console.log('sub part', part2.mimeType);
-                    if (part2.mimeType === 'text/plain') {
-                        body += ' ' + part2.body.data;
-                        // console.log('used part body')
-                    }
-                });
-            }
-        });
+        payload.parts.forEach(part => fnDoPart(1, part));
+        // {
+        // payload.parts.forEach(part => {
+        //     if (debug) console.log('part', part.mimeType);
+        //     if (part.mimeType === 'text/plain') {
+        //         body += ' ' + part.body.data;
+        //         if (debug) console.log('used part body');
+        //     } else if (part.mimeType === 'multipart/alternative' || part.mimeType === 'multipart/related') {
+        //         part.parts.forEach(part2 => {
+        //             if (debug) console.log('sub part', part2.mimeType);
+        //             if (part2.mimeType === 'text/plain') {
+        //                 body += ' ' + part2.body.data;
+        //                 if (debug) console.log('used part body');
+        //             }
+        //         });
+        //     }
+        // });
     } else {
-        // console.log('used main body')
+        if (debug) console.log('used main body');
         body = payload.body.data;
     }
 
@@ -245,6 +265,10 @@ async function getBodyDetails (payload) {
 
     var textForSpeech = body;
 
+    // console.log('after--2--------------------------')
+    // console.log('body', body)
+    // console.log('----------------------------')
+
     // encode for xml
     // textForSpeech = textForSpeech.replace(/&/g, '&amp;');
 
@@ -275,7 +299,7 @@ async function getBodyDetails (payload) {
     };
 }
 
-async function setLabel (gmail, id, labelId) {
+async function setLabel (gmail, id, labelId, name) {
     try {
         /// --> Can't change labels on drafts!
         if (id.startsWith('r-')) {
@@ -289,7 +313,7 @@ async function setLabel (gmail, id, labelId) {
             //     });
             //     console.log('set label on draft', labelId);
         } else {
-            await gmail.users.messages.modify({
+            var result = await gmail.users.messages.modify({
                 auth: gmail.auth,
                 userId: 'me',
                 id: id,
@@ -297,7 +321,12 @@ async function setLabel (gmail, id, labelId) {
                     addLabelIds: [labelId],
                 }
             });
-            console.log('set label on msg', labelId);
+
+            if (result) {
+                console.log(`set label on msg: ${name} (${labelId})`);
+            } else {
+                console.warn(`failed to set label on msg: ${name} (${labelId})`);
+            }
         }
     } catch (e) {
         console.log('error setting label', e);

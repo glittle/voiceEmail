@@ -29,9 +29,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
         })).data.values;
 
         // get call info
-        const callSid = query.CallSid;
-        const callStatus = query.CallStatus;
-
+        var callSid = query.CallSid;
+        var callStatus = query.CallStatus;
         console.log('==>', callStatus, callSid);
 
         if (!callStatus) {
@@ -83,7 +82,9 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 console.log('--> SENDING MP3', msgIndex, mp3.length);
 
                 // all seems good - mark message as read
-                gmailHelper.setLabel(gmail, msg.id, info.labelId);
+                // get label name
+                const labelName = tempStorage.labels.find(l => l.id === info.labelId)?.name;
+                gmailHelper.setLabel(gmail, msg.id, info.labelId, labelName);
 
                 return {
                     isAudio: true,
@@ -125,12 +126,19 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         // handle new call
 
-        const callerNumRaw = query.Caller;
+        var callerNumRaw = query.Caller;
 
         // no phone number?  Must be a test.
         if (!callerNumRaw) {
             return `Invalid request.`
         }
+
+        // if (Array.isArray(callerNumRaw)) {
+        //     // sometimes is an array!?
+        //     callerNumRaw = callerNumRaw[0];
+        // }
+
+        console.log('callerNumRaw', typeof callerNumRaw, callerNumRaw);
 
         // reformat caller number from +1xxxxxxxxxx to xxx-xxx-xxxx
         const callerNum = callerNumRaw.replace(/\D/g, '').substr(1).replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3');

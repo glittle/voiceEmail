@@ -89,7 +89,7 @@ app.post('/', async (req, res) => {
         console.log('|');
         console.log('| POST', callCount++, new Date().toLocaleString());
         console.log('|');
-        console.log(Object.keys(req));
+        // console.log(Object.keys(req));
         var params = req.body;
         // console.log('POST', params);
         processIncoming(params, res);
@@ -106,6 +106,7 @@ app.get('/', async (req, res) => {
         console.log('|');
         var params = req.query;
         // console.log('GET', params);
+        console.log('PATH', params.PATH);
         processIncoming(params, res);
     } catch (error) {
         console.log('error B', error);
