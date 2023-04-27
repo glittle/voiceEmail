@@ -8,6 +8,7 @@ dayjs.extend(calendar);
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(relativeTime);
+const { convert } = require('html-to-text');
 
 /*
 Note: the gmail account being used must have the following settings:
@@ -175,7 +176,7 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
 
 async function getBodyDetails (payload) {
     var body = '';
-    const debug = false;
+    const debug = true;
 
     const fnDoPart = (depth, part) => {
         if (debug) console.log(depth, part.mimeType);
@@ -194,22 +195,6 @@ async function getBodyDetails (payload) {
     // if (debug) console.log('parts', payload.parts);
     if (payload.parts) {
         payload.parts.forEach(part => fnDoPart(1, part));
-        // {
-        // payload.parts.forEach(part => {
-        //     if (debug) console.log('part', part.mimeType);
-        //     if (part.mimeType === 'text/plain') {
-        //         body += ' ' + part.body.data;
-        //         if (debug) console.log('used part body');
-        //     } else if (part.mimeType === 'multipart/alternative' || part.mimeType === 'multipart/related') {
-        //         part.parts.forEach(part2 => {
-        //             if (debug) console.log('sub part', part2.mimeType);
-        //             if (part2.mimeType === 'text/plain') {
-        //                 body += ' ' + part2.body.data;
-        //                 if (debug) console.log('used part body');
-        //             }
-        //         });
-        //     }
-        // });
     } else {
         if (debug) console.log('used main body');
         body = payload.body.data;
@@ -217,11 +202,29 @@ async function getBodyDetails (payload) {
 
     if (body) {
         body = Buffer.from(body, 'base64').toString('utf8');
-    }
-    // console.log('before--2--------------------------')
-    // console.log('body', body)
-    // console.log('----------------------------')
 
+        // remove html tags
+        if (body.startsWith('<')) {
+            // Extract the visible text using html-to-text
+            body = convert(body, {
+                wordwrap: false,
+                ignoreHref: true,
+                ignoreImage: true,
+            });
+            var lines = body.split('\n');
+            // add , to make tts pause between lines
+            body = lines.join(',\n');
+
+            // remove any [xx] text - emails get duplicated
+            body = body.replace(/\[.*?\]/g, '');
+        }
+    }
+
+    if (debug) {
+        console.log('before--2--------------------------');
+        console.log('body', body);
+        console.log('----------------------------');
+    }
     // clean up
 
     // remove some standard footer text
@@ -265,9 +268,11 @@ async function getBodyDetails (payload) {
 
     var textForSpeech = body;
 
-    // console.log('after--2--------------------------')
-    // console.log('body', body)
-    // console.log('----------------------------')
+    if (debug) {
+        console.log('after--2--------------------------')
+        console.log('body', body)
+        console.log('----------------------------')
+    }
 
     // encode for xml
     // textForSpeech = textForSpeech.replace(/&/g, '&amp;');
