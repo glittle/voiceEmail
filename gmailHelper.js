@@ -21,6 +21,7 @@ async function getMessages (gmail, labelName, isNew) {
 
 
     // tried to use Drafts but can't get the content easily. Better to use in:sent
+    // can't use in:sent
 
     // get messages in the _Welcome label
     const res1 = await gmail.users.messages.list({
@@ -142,6 +143,9 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
     console.log('\n====================');
     console.log('get email Subject:', subject);
     subject = subject.replace('[calgary-bahais] ', '').trim();
+    subject = fixWords(subject);
+    // subject = subject.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"Bˈɑːb\"></phoneme>'); // replace Bab with Báb
+    subject = `<speak>${subject}</speak>`;
 
     var to = payload.headers.find(h => h.name === 'To')?.value;
     var simpleTo = to?.replace(/<.*>/, '').trim();
@@ -192,24 +196,30 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
     return final;
 }
 
+function fixWords (s) {
+    s = s.replace(/\bBab\b/g, 'Baub'); // replace Bab with Báb
+    s = s.replace(/\bBáb\b/g, 'Baub'); // replace Bab with Báb
+    return s;
+}
+
 async function getBodyDetails (payload) {
     var body = '';
-    const debug = 0; // set to 1 to see debug output, 2 to see full text
+    const debug = 0; // set to 1 to see final text, 2 to debug process, 3 to see full text
     // var numPdfs = 0;
     var useHtml = false;
 
     const fnDoPart = (depth, part) => {
-        if (debug) console.log('Level', depth, part.mimeType);
+        if (debug > 1) console.log('Level', depth, part.mimeType);
 
         if (part.mimeType === 'text/plain') {
             body += ' ' + Buffer.from(part.body.data, 'base64').toString('utf8');
-            if (debug) console.log('used this text part');
+            if (debug > 1) console.log('used this text part');
             return;
         }
 
         if (useHtml && part.mimeType === 'text/html') {
             body += ' ' + Buffer.from(part.body.data, 'base64').toString('utf8');
-            if (debug) console.log('used this HTML part');
+            if (debug > 1) console.log('used this HTML part');
             return;
         }
 
@@ -231,7 +241,7 @@ async function getBodyDetails (payload) {
             payload.parts.forEach(part => fnDoPart(1, part));
         }
     } else {
-        if (debug) console.log('used main body');
+        if (debug > 1) console.log('used main body');
         body = Buffer.from(payload.body.data, 'base64').toString('utf8');
     }
 
@@ -241,7 +251,7 @@ async function getBodyDetails (payload) {
     // remove html tags
     if (body.startsWith('<')) {
 
-        if (debug > 1) {
+        if (debug > 2) {
             console.log('html-before--------------------------');
             console.log(body);
             console.log('----------------------------');
@@ -260,13 +270,13 @@ async function getBodyDetails (payload) {
         // remove any [xx] text - emails get duplicated
         body = body.replace(/\[.*?\]/g, '');
 
-        if (debug > 1) {
+        if (debug > 2) {
             console.log('html-after--------------------------');
             console.log(body);
             console.log('----------------------------');
         }
     } else {
-        if (debug > 1) {
+        if (debug > 2) {
             console.log('plain-text--------------------------');
             console.log(body);
             console.log('----------------------------');
@@ -292,6 +302,11 @@ async function getBodyDetails (payload) {
 
     // remove all [image: xxx] tags
     //body = body.replace(/\[image:.*?\]/g, '[Image]');
+
+    // remove all [one-tab phone number] tags
+    // body = body.replace(/\+\d{11},,.*$/g, '');
+    body = body.replace(/\+\d{11},,.*/g, ''); // first one didn't work for some reason
+    body = body.replace(/One tap mobile/g, ''); // don't need this line
 
     // remove all <a> tags
     body = body.replace(/<a.*?>/g, ' [link] ');
@@ -320,14 +335,22 @@ async function getBodyDetails (payload) {
         lines.splice(firstLine - 2, 2);
     }
 
-    // remove lines starting with >
-    body = lines.filter(line => !line.startsWith('>')).join('\r\n');
+    // remove all lines starting with >
+    lines = lines.filter(line => !line.startsWith('>'));
 
-    var textForSpeech = body;
+    // save as body
+    body = lines.join('\r\n');
+
+    var textForSpeech = `<speak>${lines.join('<break/>\r\n')}</speak>`;
+    // textForSpeech = textForSpeech.replace(/&/g, 'and'); // replace & with and
+    // textForSpeech = textForSpeech.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"BˈAːb\">Báb</phoneme>'); // replace Bab with Báb
+    textForSpeech = fixWords(textForSpeech);
 
     if (debug) {
         console.log('final-------------------------')
         console.log(body)
+        console.log('----------------------------')
+        console.log(textForSpeech)
         console.log('----------------------------')
     }
 
@@ -362,7 +385,7 @@ async function setLabel (gmail, id, labelId, name) {
             });
 
             if (result) {
-                console.log(`set label on msg: ${name} (${labelId})`);
+                console.log(`LABEL set on msg: ${name} (${labelId})`);
             } else {
                 console.warn(`failed to set label on msg: ${name} (${labelId})`);
             }

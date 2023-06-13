@@ -165,7 +165,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     return twiml.toString();
                 }
 
-                console.log('--> SENDING MP3', msgIndex, mp3.length);
+                console.log('==> SENDING MP3', '#', msgIndex, mp3.length, 'bytes');
 
                 // all seems good - mark message as read
                 // get label name
@@ -391,12 +391,12 @@ async function makeMp3 (text) {
 
 
     const request = {
-        input: { text: text },
+        input: { ssml: text },
         voice: { languageCode: 'en-US', name: 'en-US-News-K' },
         audioConfig: { audioEncoding: 'MP3' },
     };
 
-    console.log(`--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 20)}...`);
+    console.log(`--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 100)}...`);
     try {
         // start timer
         const start = Date.now();
@@ -495,11 +495,11 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage) {
     }
 
     if (clip) {
-        console.log('play -', prefix, text, clip.url)
+        console.log('==> play -', prefix, text, clip.url)
         gather.say(prefix);
         gather.play(clip.url);
     } else {
-        console.log('say -', prefix, text)
+        console.log('==> say -', prefix, text)
         gather.say(`${prefix} "${text}"`);
     }
 }

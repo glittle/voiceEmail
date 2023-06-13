@@ -121,7 +121,7 @@ async function processIncoming (params, res) {
     if (final.isAudio) {
         res.type('audio/mpeg');
         res.send(final.audio);
-        console.log('sent audio');
+        console.log('==> sent audio');
         return;
     }
 
