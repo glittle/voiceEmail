@@ -16,6 +16,87 @@ dayjs.extend(timezone);
 var sheetsApi;
 const tts = new textToSpeech.TextToSpeechClient();
 
+function sayInstructions (gather) {
+    gather.say(`Press 2 to repeat the message you are on.
+                        Press 3 to go to the next message.
+                        Press 1 to go to the previous message.
+                        Press 0 to repeat these instructions.
+                        Hang up at any time to end the call.`);
+}
+
+async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
+    const digit = query.Digits;
+
+    // no digit?  Something is wrong
+    if (!digit) {
+        twiml.say(`Sorry, didn't get your response.  Goodbye.`);
+        twiml.hangup();
+        return twiml.toString();
+    }
+
+    info.steps.push(`>${digit}`);
+    console.log('handleOngoingCall', `Pressed ${digit}`, "Current #", info.currentMsgNum, "Num Msgs", info.msgs.length);
+
+    // get the message
+    // var msg = info.msgs[0];
+
+    const gather = twiml.gather({
+        timeout: 15,
+        numDigits: 1,
+        input: 'dtmf',
+        action: query.PATH, // drop the original query string
+        method: 'GET', // force to use GET
+    });
+
+    switch (digit) {
+        case '0':
+            sayInstructions(gather);
+            break;
+
+        case '1':
+            // go to previous message
+            // if (info.currentMsgNum > 0) {
+            //     info.currentMsgNum--;
+            //     await playMessage(gather, info, query, tempStorage);
+            // } else if (info.isDevCaller) {
+            // try to get an older message
+            const foundOlderMsg = await gmailHelper.getOlderMessage(gmail, info.msgs, tempStorage.msgs, info.urlPrefix);
+            if (foundOlderMsg) {
+                info.currentMsgNum = 0;
+                await playMessage(gather, info, query, tempStorage);
+            } else {
+                gather.say(`No more messages.`);
+                sayInstructions(gather);
+            }
+            // } else {
+            //     gather.say(`No more messages.`);
+            //     sayInstructions(gather);
+            // }
+            break;
+
+        case '2':
+            await playMessage(gather, info, query, tempStorage);
+            break;
+
+        case '3':
+            // go to next message
+            if (info.currentMsgNum < info.msgs.length - 1) {
+                info.currentMsgNum++;
+                await playMessage(gather, info, query, tempStorage);
+            } else {
+                gather.say(`No more messages.`);
+                sayInstructions(gather);
+            }
+            break;
+
+        default:
+            sayInstructions(gather);
+            break;
+    }
+
+    return twiml.toString();
+};
+
 /// return final XML text to send or with MP3 audio
 async function respondToCall (query, gmail, api, tempStorage) {
     const twiml = new VoiceResponse();
@@ -45,10 +126,14 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 const code = query.c;
                 const clip = tempStorage.clips.find(c => c.code === code);
                 if (!clip) {
-                    twiml.say('Sorry, there was an error getting the audio clip: ' + code);
+                    console.warn('clip not found', code);
+                    twiml.say('Sorry, there was an error on the server.');
                     return twiml.toString();
                 }
                 // console.log('clip', clip);
+
+                info.mp3StartMs = new Date().getTime();
+
                 return {
                     isAudio: true,
                     audio: clip.mp3
@@ -67,6 +152,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
                     // convert text to MP3
                     var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;')
                     if (!txt) {
+                        console.warn('There was no text to convert to MP3!');
                         twiml.say(`There appears to be no text in this message.`);
                         return twiml.toString();
                     } else {
@@ -85,6 +171,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 // get label name
                 const labelName = tempStorage.labels.find(l => l.id === info.labelId)?.name;
                 gmailHelper.setLabel(gmail, msg.id, info.labelId, labelName);
+
+                info.mp3StartMs = new Date().getTime();
 
                 return {
                     isAudio: true,
@@ -118,7 +206,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
             default:
                 if (info) {
-                    return handleOngoingCall(query, twiml, info, tempStorage);
+                    return handleOngoingCall(gmail, query, twiml, info, tempStorage);
                 }
 
                 break;
@@ -178,12 +266,14 @@ async function respondToCall (query, gmail, api, tempStorage) {
         // get name from 4th column first, then 3rd column
         const callerName = callerRow[3] || callerRow[2];
         const labelName = callerRow[4];
+        var isNew = false;
 
         // create label if it doesn't exist
         var labelId = tempStorage.labels.find(l => l.name === labelName)?.id;
         if (!labelId) {
             labelId = await gmailHelper.createLabel(gmail, labelName);
             tempStorage.labels.push({ name: labelName, id: labelId });
+            isNew = true;
         } else {
             console.log('--> label already exists', labelName);
         }
@@ -200,15 +290,18 @@ async function respondToCall (query, gmail, api, tempStorage) {
         info = {
             callSid: callSid,
             callerNum: callerNum,
+            isDevCaller: callerNum === '403-402-7106', // && false,
             name: callerName,
             label: labelName,
             labelId: labelId,
             rowNum: rowNum,
             start: now,
             startMs: nowMs,
+            mp3StartMs: 0,
             currentMsgNum: -1, // index of msgs array
             steps: [],
-            msgs: []
+            msgs: [],
+            loadedMsgs: [],
         };
         tempStorage.calls[callSid] = info;
 
@@ -217,25 +310,45 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         // get messages
         const urlPrefix = `${query.PATH}?CallStatus=playBody&CallSid=${info.callSid}&id=`;
+        info.urlPrefix = urlPrefix;
 
-        const msgs = await gmailHelper.getMessages(gmail, labelName, tempStorage.msgs, urlPrefix);
+        const rawMsgs = await gmailHelper.getMessages(gmail, labelName, isNew);
 
-        console.log('-->', info.name, 'msgs:', msgs.length);
+        const numMsgs = rawMsgs.length;
+
+        console.log('-->', info.name, 'msgs:', numMsgs);
 
         // load them into tempStorage
-        info.msgs = msgs;
-        info.steps.push(msgs.length + ' msgs');
-        // console.log('Msgs', msgs, msgs[0].bodyDetails.audioPromise);
+        info.steps.push(numMsgs + ' msgs');
+
+        console.log('delaying msgs load')
+        setTimeout(async () => {
+            console.log('starting msgs load')
+            tempStorage.calls[callSid].msgs = await gmailHelper.loadMessages(gmail, rawMsgs, tempStorage.msgs, urlPrefix);
+            console.log('done msgs load', numMsgs, tempStorage.calls[callSid].msgs.length);
+        }, 0);
 
         twiml.say(`Hello ${info.name}.`);
 
-        if (msgs.length === 0) {
-            twiml.say(`There are no new emails for you.`);
-            twiml.say(`Have a great day!`);
-            twiml.hangup();
-        } else {
-            twiml.say('Checking the inbox for you');
 
+        if (numMsgs === 0) {
+            if (info.isDevCaller) {
+                const gather = twiml.gather({
+                    timeout: 15,
+                    numDigits: 1,
+                    input: 'dtmf',
+                    action: query.PATH, // drop the original query string
+                    method: 'GET', // force to use GET
+                });
+                gather.say(`There are no new emails for you.`);
+                gather.say(`You can hang up, or press 1 to go back to an email you have heard already.`);
+            } else {
+                twiml.say(`There are no new emails for you.`);
+                twiml.say(`Good bye!`);
+                twiml.hangup();
+            }
+        } else {
+            // say the number of messages
             const gather = twiml.gather({
                 timeout: 15,
                 numDigits: 1,
@@ -243,12 +356,10 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 action: query.PATH, // drop the original query string
                 method: 'GET', // force to use GET
             });
-
-            // say the number of messages
-            if (msgs.length === 1) {
+            if (numMsgs === 1) {
                 gather.say(`There is 1 new message.`);
             } else {
-                gather.say(`There are ${msgs.length} new messages.`);
+                gather.say(`There are ${numMsgs} new messages.`);
             }
 
             // await playMessage(gather, info, query, tempStorage);
@@ -270,6 +381,15 @@ async function respondToCall (query, gmail, api, tempStorage) {
 }
 
 async function makeMp3 (text) {
+    const maxLength = 4500; // real limit is 5000, but seems like we need to stop before that
+
+    if (text.length > maxLength) {
+        console.log('--> long text truncated to ~5000', text.length);
+        // chop off and say 'truncated'
+        text = text.substr(0, maxLength - 100) + '... [Message Truncated]';
+    }
+
+
     const request = {
         input: { text: text },
         voice: { languageCode: 'en-US', name: 'en-US-News-K' },
@@ -313,6 +433,11 @@ async function playMessage (gather, info, query, tempStorage) {
     await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage);
     await sayPlay(`With Subject: `, msg.subject, urlPrefix, gather, tempStorage);
 
+    // var numPdfs = msg.bodyDetails.numPdfs;
+    // if (numPdfs) {
+    //     gather.say(`With ${numPdfs} PDF file${numPdfs === 1 ? '' : 's'}.`);
+    // }
+
     // count words and round to nearest 100
     var wordCount = msg.bodyDetails.textForSpeech.split(' ').length + 1;
 
@@ -327,8 +452,8 @@ async function playMessage (gather, info, query, tempStorage) {
 
     gather.say(`About ${wordCount} words long`);
 
-    if (info.attachments) {
-        gather.say(`with ${info.attachments.length} attachments.`);
+    if (msg.numAttachments) {
+        gather.say(`with ${msg.numAttachments} attachment${(msg.numAttachments === 1 ? '' : 's')}.`);
     }
 
     // gather.say(msg.bodyText);
@@ -345,6 +470,9 @@ async function playMessage (gather, info, query, tempStorage) {
 }
 
 async function sayPlay (prefix, text, urlPrefix, gather, tempStorage) {
+    if (!text) {
+        return;
+    }
 
     var clip = tempStorage.clips.find(c => c.text === text);
 
@@ -376,76 +504,6 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage) {
     }
 }
 
-async function handleOngoingCall (query, twiml, info, tempStorage) {
-    const digit = query.Digits;
-
-    // no digit?  Something is wrong
-    if (!digit) {
-        twiml.say(`Sorry, didn't get your response.  Goodbye.`);
-        twiml.hangup();
-        return twiml.toString();
-    }
-
-    info.steps.push(`>${digit}`);
-
-    // get the message
-    var msg = info.msgs[0];
-
-    const gather = twiml.gather({
-        timeout: 15,
-        numDigits: 1,
-        input: 'dtmf',
-        action: query.PATH, // drop the original query string
-        method: 'GET', // force to use GET
-    });
-
-    switch (digit) {
-        case '0':
-            sayInstructions(gather);
-            break;
-
-        case '1':
-            // go to previous message
-            if (info.currentMsgNum > 0) {
-                info.currentMsgNum--;
-                await playMessage(gather, info, query, tempStorage);
-            } else {
-                gather.say(`No previous messages.`);
-                sayInstructions(gather);
-            }
-
-            break;
-
-        case '2':
-            await playMessage(gather, info, query, tempStorage);
-            break;
-
-        case '3':
-            // go to next message
-            if (info.currentMsgNum < info.msgs.length - 1) {
-                info.currentMsgNum++;
-                await playMessage(gather, info, query, tempStorage);
-            } else {
-                gather.say(`No more messages.`);
-                sayInstructions(gather);
-            }
-            break;
-
-        default:
-            sayInstructions(gather);
-            break;
-    }
-
-    return twiml.toString();
-};
-
-function sayInstructions (gather) {
-    gather.say(`Press 2 to repeat the message you are on.
-                        Press 3 to go to the next message.
-                        Press 1 to go to the previous message.
-                        Press 0 to repeat these instructions.
-                        Hang up at any time to end the call.`);
-}
 
 async function saveToSheetCell (col, rowNum, val) {
     // convert to col notation to excel column name

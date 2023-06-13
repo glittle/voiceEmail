@@ -15,34 +15,12 @@ Note: the gmail account being used must have the following settings:
 - Conversation mode is OFF
 */
 
-async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
+async function getMessages (gmail, labelName, isNew) {
     var start1 = new Date().getTime();
     const messages = [];
 
 
     // tried to use Drafts but can't get the content easily. Better to use in:sent
-    // const res0 = await gmail.users.drafts.list({
-    //     userId: 'me',
-    //     q: `NOT label:${labelName}`,
-    // });
-    // console.log('res0', res0.data)
-    // if (res0.data.drafts) {
-    //     messages.push(...res0.data.drafts);
-    // }
-    // var numDrafts = messages.length;
-    // console.log(`Found ${numDrafts} draft(s) in`, new Date().getTime() - start1, 'ms');
-
-    // get sent messages
-    // const res1 = await gmail.users.messages.list({
-    //     userId: 'me',
-    //     q: `in:sent`,// has:yellow-star NOT label:${labelName}`,
-    // });
-    // console.log('res1', res1.data)
-    // if (res1.data.messages) {
-    //     messages.push(...res1.data.messages);
-    // }
-    // var numSent = messages.length - numDrafts;
-    // console.log(`Found ${numSent} sent msg(s) in`, new Date().getTime() - start1, 'ms');
 
     // get messages in the _Welcome label
     const res1 = await gmail.users.messages.list({
@@ -50,13 +28,15 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
         q: `label:_Welcome NOT label:${labelName}`,
     });
     console.log('res1', res1.data)
-    if (res1.data.messages) {
-        messages.push(...res1.data.messages);
+    var msgs1 = res1.data.messages;
+    if (msgs1 && msgs1.length) {
+        msgs1.forEach(m => m.isWelcome = true);
+        messages.push(...msgs1);
     }
     var numWelcome = messages.length; // - numDrafts;
     console.log(`Found ${numWelcome} welcome msg(s) in`, new Date().getTime() - start1, 'ms');
 
-    // get messages from the last 4 days (ignoring the timezone)
+    // get all messages from the last 7 days (ignoring the timezone)
     var cutoffDate = dayjs().subtract(7, 'day').format('YYYY/MM/DD');
     start1 = new Date().getTime();
 
@@ -64,6 +44,7 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
     const res2 = await gmail.users.messages.list({
         userId: 'me',
         q: `in:inbox after:${cutoffDate} NOT label:${labelName}`,
+        //maxResults: isNew ? 2 : 100
     });
     console.log('res2', res2.data)
 
@@ -75,155 +56,221 @@ async function getMessages (gmail, labelName, msgsCache, urlPrefix) {
 
     console.log(`Found ${numMessages} total message(s) in`, new Date().getTime() - start1, 'ms');
 
-    if (!messages.length) {
-        return [];
+    return messages;
+}
+
+async function getOlderMessage (gmail, msgs, msgsCache, urlPrefix) {
+
+    console.log('getting old', msgs.length);
+
+    var timeOfEarliestKnownEmail = msgs.length
+        ? Math.floor(msgs[0].date.valueOf() / 1000)
+        : Math.floor(new Date().getTime() / 1000);
+
+    const res2 = await gmail.users.messages.list({
+        userId: 'me',
+        q: `in:inbox before:${timeOfEarliestKnownEmail}`,
+        maxResults: 1
+    });
+    console.log('res2', res2.data)
+
+    // add the res messages to the messages array
+    var oldMsgList = res2.data.messages;
+    if (!oldMsgList.length) {
+        return 0;
     }
 
-    // const tts = new textToSpeech.TextToSpeechClient();
+    var newMsg = await getMessageDetail(gmail, oldMsgList[0], msgsCache, urlPrefix);
+    msgs.unshift(newMsg);
+
+    return 1;
+}
+
+// get the body of the messages
+async function loadMessages (gmail, messages, msgsCache, urlPrefix) {
 
     const result = [];
-    var msgList = await Promise.all(messages.map(async (msgIds) => {
-
-        var id = msgIds.id;
-
-        var cached = msgsCache[id];
-        if (cached) {
-            cached.dateAge = cached.date.tz('America/Edmonton').fromNow();
-            console.log('got email from cache', id, cached.dateAge, cached.subject);
-            return cached;
-        }
-
-        var startTime = new Date().getTime();
-        var payload;
-        if (id.startsWith('r-')) {
-            console.log('get draft', id);
-            payload = (await gmail.users.drafts.get({
-                auth: gmail.auth,
-                userId: "me",
-                id: id,
-            })).data.message.payload;
-
-            // console.log('draft', payload);
-
-        } else {
-            console.log('get message', id);
-            payload = (await gmail.users.messages.get({
-                auth: gmail.auth,
-                userId: "me",
-                id: id,
-            })).data.payload;
-        }
-        // console.log('payload', JSON.stringify(payload))
-        var subject = payload.headers.find(h => h.name === 'Subject')?.value;
-        console.log('get email Subject:', subject);
-        subject = subject.replace('[calgary-bahais] ', '').trim();
-
-        var to = payload.headers.find(h => h.name === 'To')?.value;
-        var simpleTo = to?.replace(/<.*>/, '').trim();
-
-        var from = payload.headers.find(h => h.name === 'From')?.value;
-        var simpleFrom = from?.replace(/<.*>/, '').trim();
-
-        var dateStr = payload.headers.find(h => h.name === 'Date')?.value;
-
-        // count the number of attachments in the payload
-        var attachments = 0;
-        if (payload.parts) {
-            payload.parts.forEach(part => {
-                if (part.filename) {
-                    attachments++;
-                }
-            });
-        }
-
-
-        //convert dateStr to date using dayjs
-        const date = dayjs(dateStr);
-        const dateAge = date.tz('America/Edmonton').fromNow();
-
-        const start = new Date().getTime();
-        var bodyDetails = await getBodyDetails(payload); // promise
-        const elapsed = new Date().getTime() - start;
-        // console.log('got email body', id, elapsed, 'ms', bodyDetails.text.length, 'chars')
-
-        var final = {
-            id: id,
-            subject: subject,
-            date: date,
-            dateAge: dateAge,
-            dateSort: date.toDate(),
-            from: from,
-            simpleFrom: simpleFrom,
-            to: to,
-            simpleTo: simpleTo,
-            bodyDetails: bodyDetails,
-            bodyUrl: urlPrefix + id,
-            attachments: attachments,
-        };
-
-        msgsCache[id] = final;
-
-        return final;
-    }));
-
+    var msgList = await Promise.all(messages.map(m => getMessageDetail(gmail, m, msgsCache, urlPrefix)));
     // sort msgList by dateSort with oldest first
     msgList = msgList.sort((a, b) => {
+        if (a.isWelcome && !b.isWelcome) return -1;
+        if (!a.isWelcome && b.isWelcome) return 1;
+
         return a.dateSort - b.dateSort;
     });
 
     return msgList;
 }
 
+
+// allow just one to be be called at a time
+// however, to sort by date, need to get them all first
+async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
+    console.log('rawMsg', rawMsg);
+
+    var id = rawMsg.id;
+
+    var cached = msgsCache[id];
+    if (cached) {
+        cached.dateAge = cached.date.tz('America/Edmonton').fromNow();
+        console.log('got email from cache', id, cached.dateAge, cached.subject);
+        return cached;
+    }
+
+    var startTime = new Date().getTime();
+    var payload;
+    if (id.startsWith('r-')) {
+        console.log('get draft', id);
+        payload = (await gmail.users.drafts.get({
+            auth: gmail.auth,
+            userId: "me",
+            id: id,
+        })).data.message.payload;
+
+        // console.log('draft', payload);
+
+    } else {
+        console.log('get message', id);
+        payload = (await gmail.users.messages.get({
+            auth: gmail.auth,
+            userId: "me",
+            id: id,
+        })).data.payload;
+    }
+    // console.log('payload', JSON.stringify(payload))
+    var subject = payload.headers.find(h => h.name === 'Subject')?.value;
+    console.log('\n====================');
+    console.log('get email Subject:', subject);
+    subject = subject.replace('[calgary-bahais] ', '').trim();
+
+    var to = payload.headers.find(h => h.name === 'To')?.value;
+    var simpleTo = to?.replace(/<.*>/, '').trim();
+
+    var from = payload.headers.find(h => h.name === 'From')?.value;
+    var simpleFrom = from?.replace(/<.*>/, '').trim();
+
+    var dateStr = payload.headers.find(h => h.name === 'Date')?.value;
+
+    // count the number of numAttachments in the payload
+    var numAttachments = 0;
+    if (payload.parts) {
+        payload.parts.forEach(part => {
+            if (part.filename) {
+                numAttachments++;
+            }
+        });
+    }
+
+
+    //convert dateStr to date using dayjs
+    const date = dayjs(dateStr);
+    const dateAge = date.tz('America/Edmonton').fromNow();
+
+    const start = new Date().getTime();
+    var bodyDetails = await getBodyDetails(payload); // promise
+    const elapsed = new Date().getTime() - start;
+    // console.log('got email body', id, elapsed, 'ms', bodyDetails.text.length, 'chars')
+
+    var final = {
+        id: id,
+        subject: subject,
+        date: date,
+        dateAge: dateAge,
+        dateSort: date.toDate(),
+        from: from,
+        simpleFrom: simpleFrom,
+        to: to,
+        simpleTo: simpleTo,
+        bodyDetails: bodyDetails,
+        bodyUrl: urlPrefix + id,
+        numAttachments: numAttachments,
+        isWelcome: rawMsg.isWelcome
+    };
+
+    msgsCache[id] = final;
+
+    return final;
+}
+
 async function getBodyDetails (payload) {
     var body = '';
-    const debug = true;
+    const debug = 0; // set to 1 to see debug output, 2 to see full text
+    // var numPdfs = 0;
+    var useHtml = false;
 
     const fnDoPart = (depth, part) => {
-        if (debug) console.log(depth, part.mimeType);
+        if (debug) console.log('Level', depth, part.mimeType);
 
         if (part.mimeType === 'text/plain') {
-            body += ' ' + part.body.data;
-            if (debug) console.log('used part body');
+            body += ' ' + Buffer.from(part.body.data, 'base64').toString('utf8');
+            if (debug) console.log('used this text part');
             return;
         }
+
+        if (useHtml && part.mimeType === 'text/html') {
+            body += ' ' + Buffer.from(part.body.data, 'base64').toString('utf8');
+            if (debug) console.log('used this HTML part');
+            return;
+        }
+
+        // if (part.mimeType === 'application/pdf') {
+        //     numPdfs++;
+        // }
 
         if (part.mimeType === 'multipart/alternative' || part.mimeType === 'multipart/related') {
             part.parts.forEach(p => fnDoPart(depth + 1, p));
         }
     };
 
-    // if (debug) console.log('parts', payload.parts);
     if (payload.parts) {
         payload.parts.forEach(part => fnDoPart(1, part));
+
+        if (!body) {
+            useHtml = true;
+            console.log('no text found - try with html');
+            payload.parts.forEach(part => fnDoPart(1, part));
+        }
     } else {
         if (debug) console.log('used main body');
-        body = payload.body.data;
+        body = Buffer.from(payload.body.data, 'base64').toString('utf8');
     }
 
-    if (body) {
-        body = Buffer.from(body, 'base64').toString('utf8');
+    // remove any extra spaces
+    body = body.trim();
 
-        // remove html tags
-        if (body.startsWith('<')) {
-            // Extract the visible text using html-to-text
-            body = convert(body, {
-                wordwrap: false,
-                ignoreHref: true,
-                ignoreImage: true,
-            });
-            var lines = body.split('\n');
-            // add , to make tts pause between lines
-            body = lines.join(',\n');
+    // remove html tags
+    if (body.startsWith('<')) {
 
-            // remove any [xx] text - emails get duplicated
-            body = body.replace(/\[.*?\]/g, '');
+        if (debug > 1) {
+            console.log('html-before--------------------------');
+            console.log(body);
+            console.log('----------------------------');
         }
-    }
 
-    if (debug) {
-        console.log('before--2--------------------------');
-        console.log('body', body);
-        console.log('----------------------------');
+        // Extract the visible text using html-to-text
+        body = convert(body, {
+            wordwrap: false,
+            ignoreHref: true,
+            ignoreImage: true,
+        });
+        var lines = body.split('\n');
+        // add , to make tts pause between lines
+        body = lines.join(',\n');
+
+        // remove any [xx] text - emails get duplicated
+        body = body.replace(/\[.*?\]/g, '');
+
+        if (debug > 1) {
+            console.log('html-after--------------------------');
+            console.log(body);
+            console.log('----------------------------');
+        }
+    } else {
+        if (debug > 1) {
+            console.log('plain-text--------------------------');
+            console.log(body);
+            console.log('----------------------------');
+        }
     }
     // clean up
 
@@ -231,6 +278,9 @@ async function getBodyDetails (payload) {
     body = body.replaceAll(`Please note that emails sent to community@calgary-bahai.org have been reviewed and approved according to policies of the Local Spiritual Assembly.`, '');
     body = body.replaceAll(`You received this message because you are subscribed to the Google Groups "Calgary Bahá'í Community" group.`, '');
     body = body.replaceAll(`To unsubscribe from this group and stop receiving emails from it, send an email to community+unsubscribe@calgary-bahai.org.`, '');
+
+    // in NSA emails
+    body = body.replace(/In order to open the \.pdf message.*readstep2\.html\./gs, '');
 
     // remove empty lines with . or ,
     body = body.replace(/^\..*?$/g, ' '); // lines that start with .
@@ -243,13 +293,20 @@ async function getBodyDetails (payload) {
     // remove all [image: xxx] tags
     //body = body.replace(/\[image:.*?\]/g, '[Image]');
 
-    // replace < xxx > with nothing
-    body = body.replace(/<.*?>/g, '[link]. ');
+    // remove all <a> tags
+    body = body.replace(/<a.*?>/g, ' [link] ');
 
-    // remove http links
-    body = body.replace(/http.*?\s/g, '[link]. ');
+    // remove text versions of image or tracking tags
+    body = body.replace(/<http.*?>/g, '');
+    // body = body.replace(/<https:\/\/bahai\.us14\.list-manage\.com\/track\/click\?.*>/g, '');
 
-    body = body.replaceAll(`To view this discussion on the web visit [link]. `, '');
+
+    body = body.replace(/<img.*?>/g, ' [image] ');
+
+    // remove plain http links
+    body = body.replace(/http.*?\s/g, ' [link] ');
+
+    body = body.replace(/To view this discussion on the web visit.*\./gs, '');
 
     // split into lines by \r or \n
     var lines = body.split(/[\r\n]/);
@@ -269,38 +326,15 @@ async function getBodyDetails (payload) {
     var textForSpeech = body;
 
     if (debug) {
-        console.log('after--2--------------------------')
-        console.log('body', body)
+        console.log('final-------------------------')
+        console.log(body)
         console.log('----------------------------')
     }
-
-    // encode for xml
-    // textForSpeech = textForSpeech.replace(/&/g, '&amp;');
-
-    // replace \r\n\r\n with a break
-    // textForSpeech = textForSpeech.replace(/\r\n\r\n/g, '<break time="750ms"/>');
-
-    // // convert text to MP3
-    // const request = {
-    //     input: { text: textForSpeech },
-    //     // Select the language and SSML voice gender (optional)
-    //     voice: { languageCode: 'en-US', name: 'en-US-Neural2-E' },
-    //     // select the type of audio encoding
-    //     audioConfig: { audioEncoding: 'MP3' },
-    // };
-
-    // Performs the text-to-speech request
-    // const [response] = await tts.synthesizeSpeech(request);
-    // var mp3 = response.audioContent;
-
-    // return {
-    //     text: body,
-    //     audio: mp3,
-    // };
 
     return {
         text: body,
         textForSpeech: textForSpeech,
+        // numPdf: numPdfs,
     };
 }
 
@@ -360,6 +394,8 @@ async function createLabel (gmail, labelName) {
 
 module.exports = {
     getMessages: getMessages,
+    loadMessages: loadMessages,
+    getOlderMessage: getOlderMessage,
     createLabel: createLabel,
     setLabel: setLabel,
 };
