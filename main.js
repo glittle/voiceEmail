@@ -2,6 +2,8 @@ const { Twilio } = require('twilio');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
 const textToSpeech = require('@google-cloud/text-to-speech');
 const gmailHelper = require('./gmailHelper');
+const OpenAI = require('openai').default;
+const openai = new OpenAI({ apiKey: process.env.openai });
 
 const utf8 = require('utf8');
 
@@ -41,7 +43,7 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
     // var msg = info.msgs[0];
 
     const gather = twiml.gather({
-        timeout: 15,
+        timeout: 30,
         numDigits: 1,
         input: 'dtmf',
         action: query.PATH, // drop the original query string
@@ -145,12 +147,13 @@ async function respondToCall (query, gmail, api, tempStorage) {
                 info.steps.push(`(msg ${msgIndex})`);
                 const msg = info.msgs[msgIndex];
                 // console.log('msg', msgId, msgIndex, msg)
-                // console.log('--> GET MP3', query.id, msgIndex, msg.mp3?.length, info.msgs.map(m => m.id).join(', '));
+                console.log('>>>>>> GET MP3', query.id, msgIndex, msg.mp3?.length, info.msgs.map(m => m.id).join(', '));
 
                 var mp3 = msg.mp3;
                 if (!mp3) {
                     // convert text to MP3
-                    var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;')
+                    // var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;') // GOOGLE
+                    var txt = msg.bodyDetails.text; // OPENAI
                     if (!txt) {
                         console.warn('There was no text to convert to MP3!');
                         twiml.say(`There appears to be no text in this message.`);
@@ -334,7 +337,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         if (numMsgs === 0) {
             if (info.isDevCaller) {
                 const gather = twiml.gather({
-                    timeout: 15,
+                    timeout: 30,
                     numDigits: 1,
                     input: 'dtmf',
                     action: query.PATH, // drop the original query string
@@ -350,7 +353,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         } else {
             // say the number of messages
             const gather = twiml.gather({
-                timeout: 15,
+                timeout: 30,
                 numDigits: 1,
                 input: 'dtmf',
                 action: query.PATH, // drop the original query string
@@ -381,33 +384,45 @@ async function respondToCall (query, gmail, api, tempStorage) {
 }
 
 async function makeMp3 (text) {
-    const maxLength = 4500; // real limit is 5000, but seems like we need to stop before that
+    // const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
+    const maxLength = 4000; // OpenAi real limit is 4096
 
     if (text.length > maxLength) {
         console.log('--> long text truncated to ~5000', text.length);
-        // chop off and say 'truncated'
         text = text.substr(0, maxLength - 100) + '... [Message Truncated]';
+        // chop off and say 'truncated'
     }
 
+    console.log(`--<><><><>--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 100)}...`);
 
-    const request = {
-        input: { ssml: text },
-        voice: { languageCode: 'en-US', name: 'en-US-News-K' },
-        audioConfig: { audioEncoding: 'MP3' },
-    };
-
-    console.log(`--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 100)}...`);
     try {
         // start timer
         const start = Date.now();
 
         // Performs the text-to-speech request
-        const [response] = await tts.synthesizeSpeech(request);
-        mp3 = await response.audioContent;
+
+        // Google Cloud Platform project
+        // const request = {
+        //     input: { ssml: text },
+        //     voice: { languageCode: 'en-US', name: 'en-US-News-K' },
+        //     audioConfig: { audioEncoding: 'MP3' },
+        // };
+        // const [response] = await tts.synthesizeSpeech(request);
+        // var mp3 = await response.audioContent;
+
+        // OpenAi text to voice
+        const response = await openai.audio.speech.create({
+            model: "tts-1",
+            voice: "nova",
+            input: text,
+            speed: .85,
+        });
+
+        const mp3 = Buffer.from(await response.arrayBuffer());
 
         // end timer
         const end = Date.now();
-        // console.log('--> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1));
+        console.log('------------> seconds to retrieve:', ((end - start) / 1000.0).toFixed(1), ' length:', mp3.length);
 
         return mp3;
     } catch (err) {
