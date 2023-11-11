@@ -114,7 +114,7 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
     var cached = msgsCache[id];
     if (cached) {
         cached.dateAge = cached.date.tz('America/Edmonton').fromNow();
-        console.log('got email from cache', id, cached.dateAge, cached.subject);
+        console.log('X got email from cache', id, cached.dateAge, cached.subject);
         return cached;
     }
 
@@ -143,9 +143,9 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
     console.log('\n====================');
     console.log('get email Subject:', subject);
     subject = subject.replace('[calgary-bahais] ', '').trim();
-    subject = fixWords(subject);
+    subject = fixWords(subject) + '!'; // add ! to make it sound better
     // subject = subject.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"Bˈɑːb\"></phoneme>'); // replace Bab with Báb
-    subject = `<speak>${subject}</speak>`;
+    // subject = `<speak>${subject}</speak>`;
 
     var to = payload.headers.find(h => h.name === 'To')?.value;
     var simpleTo = to?.replace(/<.*>/, '').trim();
@@ -197,8 +197,8 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
 }
 
 function fixWords (s) {
-    s = s.replace(/\bBab\b/g, 'Baub'); // replace Bab with Báb
-    s = s.replace(/\bBáb\b/g, 'Baub'); // replace Bab with Báb
+    // s = s.replace(/\bBab\b/g, 'Baub'); // replace Bab with Báb
+    // s = s.replace(/\bBáb\b/g, 'Baub'); // replace Bab with Báb
     return s;
 }
 
@@ -265,7 +265,8 @@ async function getBodyDetails (payload) {
         });
         var lines = body.split('\n');
         // add , to make tts pause between lines
-        body = lines.join(',\n');
+        // body = lines.join(',\n');
+        lines = lines.map(line => line.trim());
 
         // remove any [xx] text - emails get duplicated
         body = body.replace(/\[.*?\]/g, '');
@@ -296,6 +297,7 @@ async function getBodyDetails (payload) {
     body = body.replace(/^\..*?$/g, ' '); // lines that start with .
     body = body.replace(/^\,.*?$/g, ' '); // lines that start with ,
     body = body.replace(/-\-+\s*?/g, ' '); // lines that start with --
+    body = body.replace(/^\+1.*?$/g, ''); // lines that start with +1
 
     // misc cleanup
     body = body.replace(/\*\*/g, '*'); // change ** to *
