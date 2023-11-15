@@ -415,7 +415,7 @@ async function makeMp3 (text) {
             model: "tts-1",
             voice: "nova",
             input: text,
-            speed: .85,
+            speed: .65,
         });
 
         const mp3 = Buffer.from(await response.arrayBuffer());
