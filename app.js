@@ -2,7 +2,7 @@ require('dotenv').config()
 const main = require('./main');
 
 const express = require('express');
-const fs = require('fs').promises;
+const fsp = require('fs').promises;
 const path = require('path');
 const process = require('process');
 const {
@@ -33,7 +33,7 @@ const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
  */
 async function loadSavedCredentialsIfExist () {
     try {
-        const content = await fs.readFile(TOKEN_PATH);
+        const content = await fsp.readFile(TOKEN_PATH);
         const credentials = JSON.parse(content);
         return google.auth.fromJSON(credentials);
     } catch (err) {
@@ -48,7 +48,7 @@ async function loadSavedCredentialsIfExist () {
  * @return {Promise<void>}
  */
 async function saveCredentials (client) {
-    const content = await fs.readFile(CREDENTIALS_PATH);
+    const content = await fsp.readFile(CREDENTIALS_PATH);
     const keys = JSON.parse(content);
     const key = keys.installed || keys.web;
     const payload = JSON.stringify({
@@ -57,7 +57,7 @@ async function saveCredentials (client) {
         client_secret: key.client_secret,
         refresh_token: client.credentials.refresh_token,
     });
-    await fs.writeFile(TOKEN_PATH, payload);
+    await fsp.writeFile(TOKEN_PATH, payload);
 }
 
 /**
@@ -102,11 +102,11 @@ app.post('/', async (req, res) => {
 app.get('/', async (req, res) => {
     try {
         console.log('|');
-        console.log('| GET', callCount++, new Date().toLocaleString());
+        console.log('| GET', callCount++, new Date().toLocaleString(), req.method);
         console.log('|');
         var params = req.query;
+        console.log('| PATH', params);
         // console.log('GET', params);
-        console.log('PATH', params.PATH);
         processIncoming(params, res);
     } catch (error) {
         console.log('error B', error);
@@ -119,9 +119,14 @@ async function processIncoming (params, res) {
     var final = await doWork(params);
 
     if (final.isAudio) {
-        res.type('audio/mpeg');
-        res.send(final.audio);
-        console.log('==> sent audio');
+        res.type('audio/wav');
+        if (final.file) {
+            res.sendFile(final.file);
+            console.log('==> sent audio file');
+        } else {
+            res.send(final.audio);
+            console.log('==> sent audio bytes');
+        }
         return;
     }
 

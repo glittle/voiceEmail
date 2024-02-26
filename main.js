@@ -1,11 +1,21 @@
-const { Twilio } = require('twilio');
-const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const textToSpeech = require('@google-cloud/text-to-speech');
+const fs = require('fs');
+const fsp = require('fs').promises;
 const gmailHelper = require('./gmailHelper');
+// const { Twilio } = require('twilio');
+const VoiceResponse = require('twilio').twiml.VoiceResponse;
+// const textToSpeech = require('@google-cloud/text-to-speech');
+// const tts = new textToSpeech.TextToSpeechClient();
 const OpenAI = require('openai').default;
-const openai = new OpenAI({ apiKey: process.env.openai });
+// const openai = new OpenAI({ apiKey: process.env.openai });
+const sdk = require("microsoft-cognitiveservices-speech-sdk");
 
-const utf8 = require('utf8');
+// const { OpenAIClient, AzureKeyCredential } = require("@azure/openai");
+// const azureOpenAiClient = new OpenAIClient(
+//     "https://<resource name>.openai.azure.com/",
+//     new AzureKeyCredential("<Azure API key>")
+// );
+
+// const utf8 = require('utf8');
 
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
@@ -16,7 +26,117 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 var sheetsApi;
-const tts = new textToSpeech.TextToSpeechClient();
+
+async function makeAudioFile (text, info, audioFilePath) {
+    // const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
+    const maxLength = 4000; // OpenAi real limit is 4096
+
+    if (text.length > maxLength) {
+        console.log('--> long text truncated to ~5000', text.length);
+        text = text.substr(0, maxLength - 100) + '... [Message Truncated]';
+        // chop off and say 'truncated'
+    }
+
+
+    try {
+        // start timer
+        const start = Date.now();
+
+        // Performs the text-to-speech request
+
+        // Google Cloud Platform project
+        // const request = {
+        //     input: { ssml: text },
+        //     voice: { languageCode: 'en-US', name: 'en-US-News-K' },
+        //     audioConfig: { audioEncoding: 'MP3' },
+        // };
+        // const [response] = await tts.synthesizeSpeech(request);
+        // var mp3 = await response.audioContent;
+
+        // OpenAi text to voice
+        // console.log(`--<><OpenAI><>--> making mp3 for clip - ${text.length} chars\n${text.substr(0, 100)}...`);
+        // const response = await openai.audio.speech.create({
+        //     model: "tts-1",
+        //     voice: "nova",
+        //     input: text,
+        //     speed: .65,
+        // });
+
+        // // Azure OpenAi text to voice
+        // console.log(`--<><Azure OpenAI><>--> making mp3 for clip - ${text.length} chars\n${text.substr(0, 100)}...`);
+        // const response = await openai.audio.speech.create({
+        //     model: "tts-1",
+        //     voice: "nova",
+        //     input: text,
+        //     speed: .65,
+        // });
+
+
+        // const mp3 = Buffer.from(await response.arrayBuffer());
+
+        // MS Speech
+        console.log(`--<><MS Speech><>--> making mp3 for clip - ${text.length} chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`);
+
+        var serviceRegion = "centralus";
+        var subscriptionKey = process.env.msSpeechKey;
+        var speechConfig = sdk.SpeechConfig.fromSubscription(subscriptionKey, serviceRegion);
+
+        // speechConfig.speechSynthesisVoiceName = "en-CA-ClaraNeural";
+        // speechConfig.outputFormat = sdk.OutputFormat.Audio16Khz32KBitRateMonoMp3;
+        // speechConfig.outputFormat = sdk.OutputFormat.Riff8Khz16BitMonoPcm;
+        // speechConfig.outputFormat = sdk.OutputFormat.Riff8Khz8BitMonoMULaw;
+
+        let audioConfig = sdk.AudioConfig.fromAudioFileOutput(audioFilePath);
+
+        var synthesizer = new sdk.SpeechSynthesizer(speechConfig, audioConfig);
+
+        const mp3 = await new Promise((resolve, reject) => {
+            synthesizer.speakTextAsync(text, async result => {
+                // console.log('MS Speech', result.audioData.length, 'bytes');
+
+                // audioData // The synthesized audio data
+                // audioDuration //The time duration of synthesized audio, in ticks (100 nanoseconds).
+                // errorDetails // In case of an unsuccessful synthesis, provides details of the occurred error.
+                // properties // The set of properties exposed in the result.
+                // reason // Specifies status of the result.
+                // resultId
+
+                synthesizer.close();
+
+                const audioFile = await fsp.readFile(audioFilePath);
+                resolve(audioFile);
+            }, error => {
+                synthesizer.close();
+
+                reject(`MS Speech error: ${error}`);
+            });
+        });
+
+        // end timer
+        const end = Date.now();
+        const sec = ((end - start) / 1000.0).toFixed(1);
+        console.log('------------> seconds to retrieve:', sec, ' length:', mp3.length, 'bytes');
+
+        var mayHaveTimedOut = sec > 20;
+        if (mayHaveTimedOut) {
+            console.warn('Seconds taken:', sec, ' Twilio may have timed out');
+        }
+        if (info.completed) {
+            console.warn('info.completed === true. Twilio must have timed out');
+        }
+
+        return {
+            mp3: mp3,
+            sec: sec,
+            mayHaveTimedOut: mayHaveTimedOut
+        };
+    } catch (err) {
+        console.log('error A', err);
+        return null;
+    }
+}
+
+
 
 function sayInstructions (gather) {
     gather.say(`Press 2 to repeat the message you are on.
@@ -115,7 +235,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
         // get call info
         var callSid = query.CallSid;
         var callStatus = query.CallStatus;
-        console.log('==>', callStatus, callSid);
 
         if (!callStatus) {
             return 'invalid request';
@@ -127,46 +246,70 @@ async function respondToCall (query, gmail, api, tempStorage) {
         switch (callStatus) {
             case 'playClip':
                 const code = query.c;
-                const clip = tempStorage.clips.find(c => c.code === code);
-                if (!clip) {
-                    console.warn('clip not found', code);
-                    twiml.say('Sorry, there was an error on the server.');
-                    return twiml.toString();
+                console.log('==>', callStatus, callSid, code);
+                var audioFilePath = `D:/${code}.wav`;
+                if (fs.existsSync(audioFilePath)) {
+                    return {
+                        isAudio: true,
+                        file: audioFilePath
+                    };
+
                 }
-                // console.log('clip', clip);
 
-                info.mp3StartMs = new Date().getTime();
+                // const clip = tempStorage.clips.find(c => c.code === code);
+                // if (!clip) {
+                console.warn('clip not found', code);
+                twiml.say('Sorry, the requested clip was not found.');
+                return twiml.toString();
+            // }
 
-                return {
-                    isAudio: true,
-                    audio: clip.mp3
-                };
+            // info.mp3StartMs = new Date().getTime();
+
+            // return {
+            //     isAudio: true,
+            //     // audio: clip.mp3,
+            //     file: audioFilePath
+            // };
 
             case 'playBody':
                 const msgId = query.id;
+                console.log('==>', callStatus, callSid, msgId);
+
+                var audioFilePath = `D:/${msgId}.wav`;
+                if (fs.existsSync(audioFilePath)) {
+                    return {
+                        isAudio: true,
+                        file: audioFilePath
+                    };
+
+                }
+
                 const msgIndex = info.msgs.findIndex(msg => msg.id === msgId);
                 info.steps.push(`(msg ${msgIndex})`);
                 const msg = info.msgs[msgIndex];
                 // console.log('msg', msgId, msgIndex, msg)
-                console.log('>>>>>> GET MP3', query.id, msgIndex, msg.mp3?.length, info.msgs.map(m => m.id).join(', '));
+                console.log('>>>>>> GET MP3', query.id, msgIndex); // , info.msgs.map(m => m.id).join(', '));
 
                 let mayHaveTimedOut = false;
                 var mp3 = msg.mp3;
-                if (!mp3) {
+                if (mp3) {
+                    console.log('>>>>>> mp3 already exists', mp3.length, 'bytes');
+                } else {
                     // convert text to MP3
                     // var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;') // GOOGLE
                     var txt = msg.bodyDetails.text; // OPENAI
+                    console.log('>>>>>> creating MP3 from text', txt?.length, 'chars');
                     if (!txt) {
                         console.warn('There was no text to convert to MP3!');
                         twiml.say(`There appears to be no text in this message.`);
                         return twiml.toString();
                     } else {
-                        var mp3Info = await makeMp3(txt, info);
+                        var mp3Info = await makeAudioFile(txt, info, audioFilePath);
                         mp3 = msg.mp3 = mp3Info ? mp3Info.mp3 : null;
 
                         mayHaveTimedOut = mp3Info.mayHaveTimedOut;
 
-                        // console.log('info after makeMp3', info)
+                        // console.log('info after makeAudioFile', info)
                         tempStorage.calls[callSid] = info;
                     }
                 }
@@ -189,7 +332,8 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
                 return {
                     isAudio: true,
-                    audio: mp3
+                    // audio: mp3,
+                    file: audioFilePath
                 };
 
             case 'completed':
@@ -289,7 +433,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             tempStorage.labels.push({ name: labelName, id: labelId });
             isNew = true;
         } else {
-            console.log('--> label already exists', labelName);
+            console.log('--> label already exists', labelName, labelId);
         }
 
         // add another label with "{labelName} Save" and get the labelId
@@ -298,7 +442,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             saveLabelId = await gmailHelper.createLabel(gmail, labelName + ' Save');
             tempStorage.labels.push({ name: labelName + ' Save', id: saveLabelId });
         } else {
-            console.log('--> save label already exists', labelName + ' Save');
+            console.log('--> save label already exists', labelName + ' Save - ' + saveLabelId);
         }
 
         info = {
@@ -308,6 +452,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             name: callerName,
             label: labelName,
             labelId: labelId,
+            saveLabelId: saveLabelId,
             rowNum: rowNum,
             start: now,
             startMs: nowMs,
@@ -346,6 +491,12 @@ async function respondToCall (query, gmail, api, tempStorage) {
         }, 0);
 
         twiml.say(`Hello ${info.name}.`);
+
+        // announce the version number
+        twiml.say(`Welcome to "Voice Email" version 2.3.`);
+
+        // twiml.say('Please note that this system is being adjusted and may not work correctly. Please try again later.');
+
 
 
         // if (numMsgs === 0) {
@@ -400,67 +551,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
         twiml.say(`Good bye.`);
         twiml.hangup();
         return twiml.toString();
-    }
-}
-
-async function makeMp3 (text, info) {
-    // const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
-    const maxLength = 4000; // OpenAi real limit is 4096
-
-    if (text.length > maxLength) {
-        console.log('--> long text truncated to ~5000', text.length);
-        text = text.substr(0, maxLength - 100) + '... [Message Truncated]';
-        // chop off and say 'truncated'
-    }
-
-    console.log(`--<><><><>--> making mp3 for clip - ${text.length} chars - ${text.substr(0, 100)}...`);
-
-    try {
-        // start timer
-        const start = Date.now();
-
-        // Performs the text-to-speech request
-
-        // Google Cloud Platform project
-        // const request = {
-        //     input: { ssml: text },
-        //     voice: { languageCode: 'en-US', name: 'en-US-News-K' },
-        //     audioConfig: { audioEncoding: 'MP3' },
-        // };
-        // const [response] = await tts.synthesizeSpeech(request);
-        // var mp3 = await response.audioContent;
-
-        // OpenAi text to voice
-        const response = await openai.audio.speech.create({
-            model: "tts-1",
-            voice: "nova",
-            input: text,
-            speed: .65,
-        });
-
-        const mp3 = Buffer.from(await response.arrayBuffer());
-
-        // end timer
-        const end = Date.now();
-        const sec = ((end - start) / 1000.0).toFixed(1);
-        console.log('------------> seconds to retrieve:', sec, ' length:', mp3.length);
-
-        var mayHaveTimedOut = sec > 20;
-        if (mayHaveTimedOut) {
-            console.warn('Seconds taken:', sec, ' Twilio may have timed out');
-        }
-        if (info.completed) {
-            console.warn('info.completed === true. Twilio must have timed out');
-        }
-
-        return {
-            mp3: mp3,
-            sec: sec,
-            mayHaveTimedOut: mayHaveTimedOut
-        };
-    } catch (err) {
-        console.log('error A', err);
-        return null;
     }
 }
 
@@ -534,15 +624,16 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
     var clip = tempStorage.clips.find(c => c.text === text);
 
     if (!clip) {
-        var mp3Info = await makeMp3(text, info);
+        console.log('==> make clip -', prefix, text)
+        // make short random code to avoid collisions
+        var code = Math.random().toString(36).substring(2);
+        var audioFilePath = `D:/${code}.wav`;
+
+        var mp3Info = await makeAudioFile(text, info, audioFilePath);
         if (mp3Info) {
-
-            // make short random code to avoid collisions
-            var code = Math.random().toString(36).substring(2);
-
             // make clip
             clip = {
-                mp3: mp3Info.mp3,
+                // mp3: mp3Info.mp3,
                 text: text,
                 code: code,
                 url: urlPrefix + code
@@ -551,13 +642,15 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
         }
     }
 
+    gather.say(prefix);
+
     if (clip) {
-        console.log('==> play -', prefix, text, clip.url)
-        gather.say(prefix);
+        console.log('==> play -', prefix, text)
+        console.log('==>     ', clip.url)
         gather.play(clip.url);
     } else {
         console.log('==> say -', prefix, text)
-        gather.say(`${prefix} "${text}"`);
+        gather.say(text);
     }
 }
 
