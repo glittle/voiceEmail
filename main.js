@@ -7,8 +7,8 @@ const VoiceResponse = require('twilio').twiml.VoiceResponse;
 // const tts = new textToSpeech.TextToSpeechClient();
 const OpenAI = require('openai').default;
 // const openai = new OpenAI({ apiKey: process.env.openai });
-const sdk = require("microsoft-cognitiveservices-speech-sdk");
-
+//const msSdk = require("microsoft-cognitiveservices-speech-sdk");
+const { createClient } = require("@deepgram/sdk");
 // const { OpenAIClient, AzureKeyCredential } = require("@azure/openai");
 // const azureOpenAiClient = new OpenAIClient(
 //     "https://<resource name>.openai.azure.com/",
@@ -21,6 +21,7 @@ const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 const calendar = require('dayjs/plugin/calendar');
+const { AudioFormatTag } = require('microsoft-cognitiveservices-speech-sdk');
 dayjs.extend(calendar);
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -29,7 +30,8 @@ var sheetsApi;
 
 async function makeAudioFile (text, info, audioFilePath) {
     // const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
-    const maxLength = 4000; // OpenAi real limit is 4096
+    // const maxLength = 4000; // OpenAi real limit is 4096
+    const maxLength = 2000; // Deepgram limit
 
     if (text.length > maxLength) {
         console.log('--> long text truncated to ~5000', text.length);
@@ -74,43 +76,69 @@ async function makeAudioFile (text, info, audioFilePath) {
 
         // const mp3 = Buffer.from(await response.arrayBuffer());
 
-        // MS Speech
-        console.log(`--<><MS Speech><>--> making mp3 for clip - ${text.length} chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`);
+        // // MS Speech
+        // console.log(`--<><MS Speech><>--> making mp3 for clip - ${text.length} chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`);
+        // var serviceRegion = "centralus";
+        // var subscriptionKey = process.env.msSpeechKey;
+        // var speechConfig = msSdk.SpeechConfig.fromSubscription(subscriptionKey, serviceRegion);
+        // let audioConfig = msSdk.AudioConfig.fromAudioFileOutput(audioFilePath);
+        // var synthesizer = new msSdk.SpeechSynthesizer(speechConfig, audioConfig);
 
-        var serviceRegion = "centralus";
-        var subscriptionKey = process.env.msSpeechKey;
-        var speechConfig = sdk.SpeechConfig.fromSubscription(subscriptionKey, serviceRegion);
+        // const mp3 = await new Promise((resolve, reject) => {
+        //     synthesizer.speakTextAsync(text, async result => {
+        //         // audioData // The synthesized audio data
+        //         // audioDuration //The time duration of synthesized audio, in ticks (100 nanoseconds).
+        //         // errorDetails // In case of an unsuccessful synthesis, provides details of the occurred error.
+        //         // properties // The set of properties exposed in the result.
+        //         // reason // Specifies status of the result.
+        //         // resultId
 
-        // speechConfig.speechSynthesisVoiceName = "en-CA-ClaraNeural";
-        // speechConfig.outputFormat = sdk.OutputFormat.Audio16Khz32KBitRateMonoMp3;
-        // speechConfig.outputFormat = sdk.OutputFormat.Riff8Khz16BitMonoPcm;
-        // speechConfig.outputFormat = sdk.OutputFormat.Riff8Khz8BitMonoMULaw;
+        //         synthesizer.close();
 
-        let audioConfig = sdk.AudioConfig.fromAudioFileOutput(audioFilePath);
+        //         const audioFile = await fsp.readFile(audioFilePath);
+        //         resolve(audioFile);
+        //     }, error => {
+        //         synthesizer.close();
 
-        var synthesizer = new sdk.SpeechSynthesizer(speechConfig, audioConfig);
+        //         reject(`MS Speech error: ${error}`);
+        //     });
+        // });
 
-        const mp3 = await new Promise((resolve, reject) => {
-            synthesizer.speakTextAsync(text, async result => {
-                // console.log('MS Speech', result.audioData.length, 'bytes');
-
-                // audioData // The synthesized audio data
-                // audioDuration //The time duration of synthesized audio, in ticks (100 nanoseconds).
-                // errorDetails // In case of an unsuccessful synthesis, provides details of the occurred error.
-                // properties // The set of properties exposed in the result.
-                // reason // Specifies status of the result.
-                // resultId
-
-                synthesizer.close();
-
-                const audioFile = await fsp.readFile(audioFilePath);
-                resolve(audioFile);
-            }, error => {
-                synthesizer.close();
-
-                reject(`MS Speech error: ${error}`);
+        // Deepgram Aura
+        const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
+        const response = await deepgramClient.speak.request(
+            { text },
+            {
+                model: "aura-asteria-en",
+                encoding: "linear16",
+                container: "wav",
+            }
+        );
+        const stream = await response.getStream();
+        const headers = await response.getHeaders();
+        var mp3;
+        if (stream) {
+            const buffer = await getAudioBuffer(stream);
+            // STEP 5: Write the audio buffer to a file
+            fs.writeFile(audioFilePath, buffer, (err) => {
+                if (err) {
+                    console.error("Error writing audio to file:", err);
+                } else {
+                    console.log("Audio file written to " + AudioFormatTag);
+                }
             });
-        });
+
+            mp3 = await fsp.readFile(audioFilePath)
+        } else {
+            console.error("Error generating audio:", stream);
+            if (headers) {
+                console.log("Headers:", headers);
+            }
+        }
+
+
+
+
 
         // end timer
         const end = Date.now();
@@ -136,6 +164,26 @@ async function makeAudioFile (text, info, audioFilePath) {
     }
 }
 
+
+// helper function to convert stream to audio buffer
+async function getAudioBuffer (response) {
+    const reader = response.getReader();
+    const chunks = [];
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        chunks.push(value);
+    }
+
+    const dataArray = chunks.reduce(
+        (acc, chunk) => Uint8Array.from([...acc, ...chunk]),
+        new Uint8Array(0)
+    );
+
+    return Buffer.from(dataArray.buffer);
+};
 
 
 function sayInstructions (gather) {
@@ -493,7 +541,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         twiml.say(`Hello ${info.name}.`);
 
         // announce the version number
-        twiml.say(`Welcome to "Voice Email" version 2.3.`);
+        twiml.say(`Welcome to "Voice Email" version 2.4.`);
 
         // twiml.say('Please note that this system is being adjusted and may not work correctly. Please try again later.');
 
