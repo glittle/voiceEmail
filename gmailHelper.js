@@ -351,6 +351,7 @@ async function getBodyDetails (payload) {
   body = body.replace(/http.*?\s/g, ' [link] ')
 
   body = body.replace(/To view this discussion on the web visit.*\./gs, '')
+  body = body.replace(/To view this discussion visit.*\./gs, '')
 
   // split into lines by \r or \n
   var lines = body.split(/[\r\n]/)
