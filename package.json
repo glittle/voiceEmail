@@ -6,6 +6,7 @@
     "author": "Glen Little <glen.little@gmail.com>",
     "license": "MIT",
     "dependencies": {
+        "@aws-sdk/client-polly": "^3.864.0",
         "@azure/openai": "^1.0.0-beta.11",
         "@deepgram/sdk": "^3.2.0",
         "@google-cloud/text-to-speech": "^4.2.1",
