@@ -372,7 +372,18 @@ async function getBodyDetails (payload) {
   // save as body
   body = lines.join('\r\n')
 
-  var textForSpeech = `<speak>${lines.join('<break/>\r\n')}</speak>`
+  if (body.length > maxLength) {
+    const originalLength = body.length
+    body = body.substring(0, maxLength - 25) + '... [Message Truncated]'
+    // chop off and say 'truncated'
+    console.log(
+      `--> long text truncated to ${body.length} from ${originalLength}`
+    )
+  }
+
+  var textForSpeech = `<speak><prosody rate="slow">${lines.join(
+    '<break/>\r\n'
+  )}</prosody></speak>`
   // textForSpeech = textForSpeech.replace(/&/g, 'and'); // replace & with and
   // textForSpeech = textForSpeech.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"BˈAːb\">Báb</phoneme>'); // replace Bab with Báb
   textForSpeech = fixWords(textForSpeech)
@@ -444,10 +455,21 @@ async function createLabel (gmail, labelName) {
   }
 }
 
+let voiceModel = ''
+let maxLength = 4000 // default
+
 module.exports = {
   getMessages: getMessages,
   loadMessages: loadMessages,
   getOlderMessage: getOlderMessage,
   createLabel: createLabel,
-  setLabel: setLabel
+  setLabel: setLabel,
+  setVoiceModel: function (model) {
+    voiceModel = model
+    // const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
+    // const maxLength = 4000; // OpenAi real limit is 4096
+    // const maxLength = 2000 // Deepgram limit
+    // const maxLength = 4000 // AWS limit. Real is supposed to be 6000.
+    maxLength = voiceModel === 'ms' || voiceModel === 'gemini' ? 9000 : 4000 // real limits: Microsoft limit is 10,000, AWS is 5,000
+  }
 }

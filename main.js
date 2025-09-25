@@ -14,8 +14,12 @@ const msSdk = require('microsoft-cognitiveservices-speech-sdk')
 //     "https://<resource name>.openai.azure.com/",
 //     new AzureKeyCredential("<Azure API key>")
 // );
+const { GoogleGenerativeAI } = require('@google/generative-ai')
+const ffmpeg = require('fluent-ffmpeg')
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY)
+const wav = require('wav'); // Added for WAV output
 
-// const utf8 = require('utf8');
+
 
 const dayjs = require('dayjs')
 const utc = require('dayjs/plugin/utc')
@@ -28,28 +32,22 @@ dayjs.extend(timezone)
 
 const {
   PollyClient,
-  SynthesizeSpeechCommand
+  SynthesizeSpeechCommand,
+  SpeechMarkType
 } = require('@aws-sdk/client-polly')
 
 var sheetsApi
 
-const voiceModel = 'aws' // ms or aws
-const soundFileExtension = 'mp3' // ms uses .WAV and aws uses .mp3
-// const maxLength = 4500; // Google real limit is 5000, but seems like we need to stop before that
-// const maxLength = 4000; // OpenAi real limit is 4096
-// const maxLength = 2000 // Deepgram limit
-const maxLength = 4000 // AWS limit. Real is supposed to be 6000.
+const VERSION_NUM = 'Welcome to "Voice Email" version 2.9.'
+const voiceModel = 'gemini' // aws, gemini
+
+const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
+const useSSML = false // voiceModel === 'aws' ? true : false // true for aws and google
+
+gmailHelper.setVoiceModel(voiceModel)
 
 async function makeAudioFile (text, info, audioFilePath) {
   fsp.writeFile(audioFilePath + '.txt', text)
-  if (text.length > maxLength) {
-    const originalLength = text.length
-    text = text.substr(0, maxLength - 25) + '... [Message Truncated]'
-    // chop off and say 'truncated'
-    console.log(
-      `--> long text truncated to ${text.length} from ${originalLength}`
-    )
-  }
 
   try {
     // start timer
@@ -58,6 +56,56 @@ async function makeAudioFile (text, info, audioFilePath) {
     let mp3
 
     switch (voiceModel) {
+		case 'gemini':
+        console.log(
+          `\n>>>>> Gemini TTS Preview --> making mp3 for clip - ${
+            text.length
+          } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
+        ); 
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
+        const prompt = `Read this text aloud clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
+
+        const result = await model.generateContent({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: 'Kore'  // Clear, cheerful; alternatives: 'Zephyr', 'Puck'
+                }
+              }
+            }
+          }
+        });
+
+        // Log full response for debugging
+        // console.log('Gemini API response:', JSON.stringify(result, null, 2));
+
+        // Extract base64 PCM from inlineData
+        const base64Audio = result.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) {
+          console.warn('No audio data; falling back to AWS Polly');
+          voiceModel = 'aws'; // Fallback to your AWS case
+          return makeAudioFile(text, info, audioFilePath); // Recursive call
+        }
+        const pcmBuffer = Buffer.from(base64Audio, 'base64');
+
+        /// Write WAV directly
+        const writer = new wav.FileWriter(audioFilePath, { channels: 1, sampleRate: 24000, bitDepth: 16 });
+        writer.write(pcmBuffer);
+        writer.end();
+        await new Promise((resolve) => writer.on('finish', resolve));
+        mp3 = await fsp.readFile(audioFilePath); // Treat as mp3 for compatibility
+        //await fsp.unlink(audioFilePath);
+        const sec = ((Date.now() - start) / 1000.0).toFixed(1);
+        console.log('------------> seconds to retrieve:', sec, ' length:', mp3.length, 'bytes');
+        return {
+          mp3,
+          sec,
+          mayHaveTimedOut: parseFloat(sec) > 60
+        };
+
       case 'ms':
         // MS Speech
         console.log(
@@ -73,6 +121,8 @@ async function makeAudioFile (text, info, audioFilePath) {
         )
         let audioConfig = msSdk.AudioConfig.fromAudioFileOutput(audioFilePath)
         var synthesizer = new msSdk.SpeechSynthesizer(speechConfig, audioConfig)
+        // synthesizer.rate = -10
+        // synthesizer.Rate = -10
 
         mp3 = await new Promise((resolve, reject) => {
           synthesizer.speakTextAsync(
@@ -115,8 +165,13 @@ async function makeAudioFile (text, info, audioFilePath) {
           }
         })
 
+        // slow it down by wrapping the entire text with SSML <speak><prosody rate="x-slow">
+        // text = `<speak><prosody rate="x-slow">${text}</prosody></speak>`
+
         const params = {
-          Text: text,
+          //Text: text,
+		  Text: `<speak><prosody rate="x-slow">${text}</prosody></speak>`, // Slows to ~75% speed; adjust as needed (e.g., "slow" or "0.8")
+          TextType: 'ssml',
           OutputFormat: 'mp3',
           VoiceId: 'Ruth',
           Engine: 'generative'
@@ -417,7 +472,11 @@ async function respondToCall (query, gmail, api, tempStorage) {
         } else {
           // convert text to MP3
           // var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;') // GOOGLE
-          var txt = msg.bodyDetails.text // OPENAI
+          // var txt = msg.bodyDetails.text // OPENAI
+          const txt = useSSML
+            ? msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;')
+            : msg.bodyDetails.text
+
           console.log('>>>>>> creating MP3 from text', txt?.length, 'chars')
           if (!txt) {
             console.warn('There was no text to convert to MP3!')
@@ -641,7 +700,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
     twiml.say(`Hello ${info.name}.`)
 
     // announce the version number
-    twiml.say(`Welcome to "Voice Email" version 2.6. `)
+    twiml.say(VERSION_NUM)
 
     // twiml.say('Please note that this system is being adjusted and may not work correctly. Please try again later.');
 
