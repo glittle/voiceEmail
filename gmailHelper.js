@@ -154,8 +154,6 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
   }
   // console.log('payload', JSON.stringify(payload))
   var subject = payload.headers.find(h => h.name === 'Subject')?.value
-  console.log('\n====================')
-  console.log('get email Subject:', subject)
   subject = subject.replace('[calgary-bahais] ', '').trim()
   subject = fixWords(subject) + '!' // add ! to make it sound better
   // subject = subject.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"Bˈɑːb\"></phoneme>'); // replace Bab with Báb

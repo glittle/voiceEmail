@@ -38,8 +38,8 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 2.9.'
-const voiceModel = 'gemini' // aws, gemini
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.0!'
+let voiceModel = 'gemini' // aws, gemini
 
 const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
 const useSSML = false // voiceModel === 'aws' ? true : false // true for aws and google
@@ -63,7 +63,7 @@ async function makeAudioFile (text, info, audioFilePath) {
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         ); 
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
-        const prompt = `Read this text aloud clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
+        const prompt = `Read this text aloud slowly and clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
 
         const result = await model.generateContent({
           contents: [{ parts: [{ text: prompt }] }],
@@ -87,7 +87,9 @@ async function makeAudioFile (text, info, audioFilePath) {
         if (!base64Audio) {
           console.warn('No audio data; falling back to AWS Polly');
           voiceModel = 'aws'; // Fallback to your AWS case
-          return makeAudioFile(text, info, audioFilePath); // Recursive call
+          const result = makeAudioFile(text, info, audioFilePath); // Recursive call
+          voiceModel = 'gemini'; // reset back
+		  return result; 
         }
         const pcmBuffer = Buffer.from(base64Audio, 'base64');
 
@@ -774,16 +776,25 @@ async function playMessage (gather, info, query, tempStorage) {
 
   gather.say(`Message ${info.currentMsgNum + 1}: ${msg.dateAge}`)
 
-  await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage, info)
-  await sayPlay(
-    `With Subject: `,
-    msg.subject,
-    urlPrefix,
-    gather,
-    tempStorage,
-    info
-  )
-
+//  await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage, info)
+//  await sayPlay(
+//    `With Subject: `,
+//    msg.subject,
+//    urlPrefix,
+//    gather,
+//    tempStorage,
+//    info
+//	)
+	
+	if (msg.fromUrl) 
+	{	
+	  gather.say(`From: `);
+	  gather.play(msg.fromUrl);
+	}
+	if (msg.subjectUrl) {
+	  gather.say(`With Subject: `);
+	  gather.play(msg.subjectUrl);
+	}
   // var numPdfs = msg.bodyDetails.numPdfs;
   // if (numPdfs) {
   //     gather.say(`With ${numPdfs} PDF file${numPdfs === 1 ? '' : 's'}.`);
@@ -904,6 +915,76 @@ async function addToLog (info) {
   })
 }
 
+async function cleanupOldAudio() {
+  const files = await fsp.readdir('D:/');
+  const cutoff = dayjs().subtract(7, 'day').valueOf();
+  for (const file of files) {
+    if (file.endsWith(`.${soundFileExtension}`)) {
+      const stats = await fsp.stat(`D:/${file}`);
+      if (stats.mtimeMs < cutoff) {
+        await fsp.unlink(`D:/${file}`);
+        console.log(`Deleted old audio file: ${file}`);
+      }
+    }
+  }
+}
+
+async function preCacheAudio(gmail) {
+	
+  await cleanupOldAudio();
+	
+  console.log('Pre-caching audio for inbox emails...');
+
+  // Use a generic or no label for fetching (adjust based on your setup)
+  // Assuming '_Welcome' is used as a fallback, or just 'in:inbox'
+  const rawMsgs = await gmailHelper.getMessages(gmail, '_Welcome', false); // false for full fetch
+  console.log(`Found ${rawMsgs.length} messages to process.`);
+
+  // Load message details (reuse loadMessages; pass empty {} for tempStorage.msgs)
+  const msgs = await gmailHelper.loadMessages(gmail, rawMsgs, {}, '');
+  const info = { completed: false }; // Dummy info for makeAudioFile
+
+  // Process each message
+  for (const msg of msgs) {
+    const audioFilePath = `D:/${msg.id}.${soundFileExtension}`;
+    if (!fs.existsSync(audioFilePath)) {
+		const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed) 
+		if (txt) {
+			console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
+			await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
+		}
+    }
+
+    // From audio 
+	const fromText = msg.simpleFrom;
+	const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
+	if (!fs.existsSync(audioFilePathFrom) && fromText) {
+	  console.log(`Generating from audio for msg ${msg.id}`);
+	  await makeAudioFile(fromText, info, audioFilePathFrom);
+	}
+	msg.fromUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_from`;
+
+	// Subject audio (add '!' like in getMessageDetail for better intonation)
+	const subjectText = fixWords(msg.subject) + '!';
+	const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
+	if (!fs.existsSync(audioFilePathSubject) && subjectText) {
+	  console.log(`Generating subject audio for msg ${msg.id}`);
+	  await makeAudioFile(subjectText, info, audioFilePathSubject);
+	}
+	msg.subjectUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_subject`;
+  }
+	  
+}
+
+
+function fixWords (s) {
+  // s = s.replace(/\bBab\b/g, 'Baub'); // replace Bab with Báb
+  // s = s.replace(/\bBáb\b/g, 'Baub'); // replace Bab with Báb
+  return s
+}
+
+
 module.exports = {
-  respondToCall: respondToCall
+  respondToCall,
+  preCacheAudio
 }

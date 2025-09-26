@@ -8,6 +8,9 @@ const process = require('process')
 const { authenticate } = require('@google-cloud/local-auth')
 const { google } = require('googleapis')
 
+const cron = require('node-cron');
+const { preCacheAudio } = require('./main'); // Add this
+
 // If modifying these scopes, delete token.json.
 const SCOPES = [
   // 'https://www.googleapis.com/auth/gmail.readonly',
@@ -177,12 +180,49 @@ async function doWork (query) {
 
 // for testing
 // doWork('test');
+// Function to check if any call is active
+function isAnyCallActive() {
+  return Object.values(tempStorage.calls).some(call => !call.completed);
+}
+
+// Function to run pre-caching with call check
+async function runPreCacheAudio(gmail) {
+  if (isAnyCallActive()) {
+    console.log('Skipping pre-caching: Active call(s) detected.');
+    return;
+  }
+  console.log('Running pre-caching...');
+  try {
+    await preCacheAudio(gmail);
+    console.log('Pre-caching completed.');
+  } catch (error) {
+    console.error('Pre-caching failed:', error);
+  }
+}
+
+// Schedule pre-caching
+(async () => {
+  const auth = await authorize();
+  const gmail = google.gmail({ version: 'v1', auth });
+
+  // Run immediately on startup
+  console.log('Starting initial email check and audio pre-caching at', new Date().toLocaleString());
+  await runPreCacheAudio(gmail);
+
+  // Schedule every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    console.log('Starting scheduled email check and audio pre-caching at', new Date().toLocaleString());
+    await runPreCacheAudio(gmail);
+  }, {
+    timezone: 'America/Edmonton'
+  });
+})();
 
 // Start the server
 let server = app.listen(app.get('port'), function () {
   console.log('|')
   console.log(
-    'App listening on port %s at %s',
+    'App started. Listening on port %s at %s',
     server.address().port,
     new Date().toLocaleString()
   )
