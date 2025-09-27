@@ -63,7 +63,7 @@ async function makeAudioFile (text, info, audioFilePath) {
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         ); 
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
-        const prompt = `Read this text aloud slowly and clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
+        const prompt = `Read this text aloud and clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
 
         const result = await model.generateContent({
           contents: [{ parts: [{ text: prompt }] }],
@@ -846,6 +846,30 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
   }
 
   var clip = tempStorage.clips.find(c => c.text === text)
+
+  // NEW: Check for pre-cached disk file using current msg ID and inferred suffix
+  if (!clip && info.currentMsgNum !== undefined) {
+    const msg = info.msgs[info.currentMsgNum]
+    let suffix = ''
+    if (prefix.includes('From:')) {
+      suffix = '_from'
+    } else if (prefix.includes('Subject:')) {
+      suffix = '_subject'
+    }
+    if (suffix) {
+      const cachedPath = `D:/${msg.id}${suffix}.${soundFileExtension}`
+      if (fs.existsSync(cachedPath)) {
+        console.log(`==> Using pre-cached ${suffix} audio for msg ${msg.id}`)
+        const code = `${msg.id}${suffix}`  // Use deterministic "code" based on ID+suffix
+        clip = {
+          text: text,
+          code: code,
+          url: urlPrefix + code
+        }
+        tempStorage.clips.push(clip)  // Cache in memory for future reuse
+      }
+    }
+  }
 
   if (!clip) {
     console.log('==> make clip -', prefix, text)
