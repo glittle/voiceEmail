@@ -38,7 +38,7 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 3.0!'
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.1!'
 let voiceModel = 'gemini' // aws, gemini
 
 const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
@@ -776,25 +776,16 @@ async function playMessage (gather, info, query, tempStorage) {
 
   gather.say(`Message ${info.currentMsgNum + 1}: ${msg.dateAge}`)
 
-//  await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage, info)
-//  await sayPlay(
-//    `With Subject: `,
-//    msg.subject,
-//    urlPrefix,
-//    gather,
-//    tempStorage,
-//    info
-//	)
-	
-	if (msg.fromUrl) 
-	{	
-	  gather.say(`From: `);
-	  gather.play(msg.fromUrl);
-	}
-	if (msg.subjectUrl) {
-	  gather.say(`With Subject: `);
-	  gather.play(msg.subjectUrl);
-	}
+  await sayPlay(`From: `, msg.simpleFrom, urlPrefix, gather, tempStorage, info)
+  await sayPlay(
+    `With Subject: `,
+    msg.subject,
+    urlPrefix,
+    gather,
+    tempStorage,
+    info
+  )
+
   // var numPdfs = msg.bodyDetails.numPdfs;
   // if (numPdfs) {
   //     gather.say(`With ${numPdfs} PDF file${numPdfs === 1 ? '' : 's'}.`);
@@ -831,6 +822,10 @@ async function playMessage (gather, info, query, tempStorage) {
     // gather.say(msg.bodyText);
     gather.play(msg.bodyUrl)
     gather.play({ digits: 'ww' }) // pause for a second
+    
+    // Label the message as read after queuing the body playback
+    const labelName = tempStorage.labels.find(l => l.id === info.labelId)?.name
+    gmailHelper.setLabel(info.gmail, msg.id, info.labelId, labelName)
   }
 
   var isLast = info.currentMsgNum === info.msgs.length - 1
