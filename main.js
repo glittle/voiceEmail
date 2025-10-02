@@ -38,7 +38,7 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 3.1!'
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.2!'
 let voiceModel = 'gemini' // aws, gemini
 
 const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
@@ -56,12 +56,11 @@ async function makeAudioFile (text, info, audioFilePath) {
     let mp3
 
     switch (voiceModel) {
-		case 'gemini':
+      case 'gemini':
         console.log(
-          `\n>>>>> Gemini TTS Preview --> making mp3 for clip - ${
-            text.length
+          `\n>>>>> Gemini TTS Preview --> making mp3 for clip - ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
-        ); 
+        );
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
         const prompt = `Read this text aloud and clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
 
@@ -85,11 +84,11 @@ async function makeAudioFile (text, info, audioFilePath) {
         // Extract base64 PCM from inlineData
         const base64Audio = result.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (!base64Audio) {
-          console.warn('No audio data; falling back to AWS Polly');
+          console.warn('No audio data from Gemini; falling back to AWS Polly');
           voiceModel = 'aws'; // Fallback to your AWS case
-          const result = makeAudioFile(text, info, audioFilePath); // Recursive call
+          const fallbackResult = await makeAudioFile(text, info, audioFilePath); // Recursive call
           voiceModel = 'gemini'; // reset back
-		  return result; 
+          return fallbackResult;
         }
         const pcmBuffer = Buffer.from(base64Audio, 'base64');
 
@@ -111,8 +110,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       case 'ms':
         // MS Speech
         console.log(
-          `\n>>>>> MS Speech --> making mp3 for clip - ${
-            text.length
+          `\n>>>>> MS Speech --> making mp3 for clip - ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         )
         var serviceRegion = 'centralus'
@@ -154,8 +152,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       case 'aws':
         // Amazon Polly
         console.log(
-          `\n>>>>> Amazon Polly --> making mp3 for clip - ${
-            text.length
+          `\n>>>>> Amazon Polly --> making mp3 for clip - ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         )
 
@@ -172,7 +169,7 @@ async function makeAudioFile (text, info, audioFilePath) {
 
         const params = {
           //Text: text,
-		  Text: `<speak><prosody rate="x-slow">${text}</prosody></speak>`, // Slows to ~75% speed; adjust as needed (e.g., "slow" or "0.8")
+          Text: `<speak><prosody rate="x-slow">${text}</prosody></speak>`, // Slows to ~75% speed; adjust as needed (e.g., "slow" or "0.8")
           TextType: 'ssml',
           OutputFormat: 'mp3',
           VoiceId: 'Ruth',
@@ -480,7 +477,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             : msg.bodyDetails.text
 
           console.log('>>>>>> creating MP3 from text', txt?.length, 'chars')
-          if (!txt) {
+          if (!txt || txt.trim().length === 0) {
             console.warn('There was no text to convert to MP3!')
             twiml.say(`There appears to be no text in this message.`)
             return twiml.toString()
@@ -792,9 +789,10 @@ async function playMessage (gather, info, query, tempStorage) {
   // }
 
   // count words and round to nearest 100
-  var wordCount = msg.bodyDetails.textForSpeech.split(' ').length + 1
+  // Use the plain text field instead of textForSpeech to avoid counting SSML tags
+  var wordCount = msg.bodyDetails.text.trim().split(/\s+/).filter(w => w.length > 0).length
   var skip = wordCount < 5
-  console.log('word count', wordCount, skip ? 'skipped' : '')
+  console.log('word count', wordCount, skip ? 'skipped' : '', 'text length:', msg.bodyDetails.text.length)
 
   if (skip) {
     gather.say(`This message appears to be empty.`)
@@ -812,8 +810,7 @@ async function playMessage (gather, info, query, tempStorage) {
 
   if (msg.numAttachments) {
     gather.say(
-      `with ${msg.numAttachments} attachment${
-        msg.numAttachments === 1 ? '' : 's'
+      `with ${msg.numAttachments} attachment${msg.numAttachments === 1 ? '' : 's'
       }.`
     )
   }
@@ -822,7 +819,7 @@ async function playMessage (gather, info, query, tempStorage) {
     // gather.say(msg.bodyText);
     gather.play(msg.bodyUrl)
     gather.play({ digits: 'ww' }) // pause for a second
-    
+
     // Label the message as read after queuing the body playback
     const labelName = tempStorage.labels.find(l => l.id === info.labelId)?.name
     gmailHelper.setLabel(info.gmail, msg.id, info.labelId, labelName)
@@ -841,7 +838,7 @@ async function playMessage (gather, info, query, tempStorage) {
 }
 
 async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
-  if (!text) {
+  if (!text || text.trim().length === 0) {
     return
   }
 
@@ -872,10 +869,10 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
   }
 
   if (!clip) {
-    console.log('==> make clip -', prefix, text)
+    console.log('==> make random clip -', prefix, text)
     // make short random code to avoid collisions
     var code = Math.random().toString(36).substring(2)
-    var audioFilePath = `D:/${code}.${soundFileExtension}`
+    var audioFilePath = `D:/random_${code}.${soundFileExtension}`
 
     var mp3Info = await makeAudioFile(text, info, audioFilePath)
     if (mp3Info) {
@@ -934,24 +931,24 @@ async function addToLog (info) {
   })
 }
 
-async function cleanupOldAudio() {
-  const files = await fsp.readdir('D:/');
-  const cutoff = dayjs().subtract(7, 'day').valueOf();
-  for (const file of files) {
-    if (file.endsWith(`.${soundFileExtension}`)) {
-      const stats = await fsp.stat(`D:/${file}`);
-      if (stats.mtimeMs < cutoff) {
-        await fsp.unlink(`D:/${file}`);
-        console.log(`Deleted old audio file: ${file}`);
-      }
-    }
-  }
-}
+// async function cleanupOldAudio() {
+//   const files = await fsp.readdir('D:/');
+//   const cutoff = dayjs().subtract(7, 'day').valueOf();
+//   for (const file of files) {
+//     if (file.endsWith(`.${soundFileExtension}`)) {
+//       const stats = await fsp.stat(`D:/${file}`);
+//       if (stats.mtimeMs < cutoff) {
+//         await fsp.unlink(`D:/${file}`);
+//         console.log(`Deleted old audio file: ${file}`);
+//       }
+//     }
+//   }
+// }
 
-async function preCacheAudio(gmail) {
-	
-  await cleanupOldAudio();
-	
+async function preCacheAudio (gmail) {
+
+  // await cleanupOldAudio();
+
   console.log('Pre-caching audio for inbox emails...');
 
   // Use a generic or no label for fetching (adjust based on your setup)
@@ -967,32 +964,32 @@ async function preCacheAudio(gmail) {
   for (const msg of msgs) {
     const audioFilePath = `D:/${msg.id}.${soundFileExtension}`;
     if (!fs.existsSync(audioFilePath)) {
-		const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed) 
-		if (txt) {
-			console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
-			await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
-		}
+      const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed)
+      if (txt) {
+        console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
+        await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
+      }
     }
 
-    // From audio 
-	const fromText = msg.simpleFrom;
-	const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
-	if (!fs.existsSync(audioFilePathFrom) && fromText) {
-	  console.log(`Generating from audio for msg ${msg.id}`);
-	  await makeAudioFile(fromText, info, audioFilePathFrom);
-	}
-	msg.fromUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_from`;
+    // From audio
+    const fromText = msg.simpleFrom;
+    const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
+    if (!fs.existsSync(audioFilePathFrom) && fromText) {
+      console.log(`Generating from audio for msg ${msg.id}`);
+      await makeAudioFile(fromText, info, audioFilePathFrom);
+    }
+    msg.fromUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_from`;
 
-	// Subject audio (add '!' like in getMessageDetail for better intonation)
-	const subjectText = fixWords(msg.subject) + '!';
-	const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
-	if (!fs.existsSync(audioFilePathSubject) && subjectText) {
-	  console.log(`Generating subject audio for msg ${msg.id}`);
-	  await makeAudioFile(subjectText, info, audioFilePathSubject);
-	}
-	msg.subjectUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_subject`;
+    // Subject audio (add '!' like in getMessageDetail for better intonation)
+    const subjectText = fixWords(msg.subject) + '!';
+    const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
+    if (!fs.existsSync(audioFilePathSubject) && subjectText) {
+      console.log(`Generating subject audio for msg ${msg.id}`);
+      await makeAudioFile(subjectText, info, audioFilePathSubject);
+    }
+    msg.subjectUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_subject`;
   }
-	  
+
 }
 
 

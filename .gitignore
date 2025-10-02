@@ -105,3 +105,5 @@ dist
 credentials.json
 token.json
 voice-email-*.json
+call log 1.txt
+startup log.txt

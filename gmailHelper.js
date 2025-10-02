@@ -40,8 +40,8 @@ async function getMessages (gmail, labelName, isNew) {
     'ms'
   )
 
-  // get all messages from the last 7 days (ignoring the timezone)
-  var cutoffDate = dayjs().subtract(7, 'day').format('YYYY/MM/DD')
+  // get all messages from the last 21 days (ignoring the timezone)
+  var cutoffDate = dayjs().subtract(21, 'day').format('YYYY/MM/DD')
   start1 = new Date().getTime()
 
   // get this label's messages
@@ -379,9 +379,19 @@ async function getBodyDetails (payload) {
     )
   }
 
-  var textForSpeech = `<speak><prosody rate="slow">${lines.join(
-    '<break/>\r\n'
-  )}</prosody></speak>`
+  // Check if body is empty or only whitespace
+  if (body.trim().length === 0) {
+    console.log('--> Email body is empty')
+    return {
+      text: '',
+      textForSpeech: ''
+    }
+  }
+
+  var textForSpeech = body;
+  // var textForSpeech = `<speak><prosody rate="slow">${lines.join(
+  //   '<break/>\r\n'
+  // )}</prosody></speak>`
   // textForSpeech = textForSpeech.replace(/&/g, 'and'); // replace & with and
   // textForSpeech = textForSpeech.replace(/\bBab\b/g, '<phoneme alphabet=\"ipa\" ph=\"BˈAːb\">Báb</phoneme>'); // replace Bab with Báb
   textForSpeech = fixWords(textForSpeech)
