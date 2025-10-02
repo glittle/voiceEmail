@@ -181,12 +181,12 @@ async function doWork (query) {
 // for testing
 // doWork('test');
 // Function to check if any call is active
-function isAnyCallActive() {
+function isAnyCallActive () {
   return Object.values(tempStorage.calls).some(call => !call.completed);
 }
 
 // Function to run pre-caching with call check
-async function runPreCacheAudio(gmail) {
+async function runPreCacheAudio (gmail) {
   if (isAnyCallActive()) {
     console.log('Skipping pre-caching: Active call(s) detected.');
     return;
