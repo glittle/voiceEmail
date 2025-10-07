@@ -38,7 +38,7 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 3.2!'
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.3'
 let voiceModel = 'gemini' // aws, gemini
 
 const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
@@ -424,6 +424,14 @@ async function respondToCall (query, gmail, api, tempStorage) {
         const code = query.c
         console.log('==>', callStatus, callSid, code)
         var audioFilePath = `D:/${code}.${soundFileExtension}`
+        if (fs.existsSync(audioFilePath)) {
+          return {
+            isAudio: true,
+            file: audioFilePath
+          }
+        }
+        // try with "random_" prefix
+        audioFilePath = `D:/random_${code}.${soundFileExtension}`
         if (fs.existsSync(audioFilePath)) {
           return {
             isAudio: true,
