@@ -19,6 +19,7 @@ const ffmpeg = require('fluent-ffmpeg')
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY)
 const wav = require('wav'); // Added for WAV output
 
+const cacheFolder = "C:/Data/TempVoiceEmail";
 
 
 const dayjs = require('dayjs')
@@ -461,7 +462,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
     switch (callStatus) {
       case 'playClip':
         const code = query.c
-        var audioFilePath = `D:/${code}.${soundFileExtension}`
+        var audioFilePath = `${cacheFolder}/${code}.${soundFileExtension}`
         if (fs.existsSync(audioFilePath)) {
           return {
             isAudio: true,
@@ -469,7 +470,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
           }
         }
         // try with "random_" prefix
-        audioFilePath = `D:/random_${code}.${soundFileExtension}`
+        audioFilePath = `${cacheFolder}/random_${code}.${soundFileExtension}`
         if (fs.existsSync(audioFilePath)) {
           return {
             isAudio: true,
@@ -496,7 +497,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
         const msgId = query.id
         console.log('==>', callStatus, callSid, msgId)
 
-        var audioFilePath = `D:/${msgId}.${soundFileExtension}`
+        var audioFilePath = `${cacheFolder}/${msgId}.${soundFileExtension}`
         if (fs.existsSync(audioFilePath)) {
           return {
             isAudio: true,
@@ -894,7 +895,7 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
       suffix = '_subject'
     }
     if (suffix) {
-      const cachedPath = `D:/${msg.id}${suffix}.${soundFileExtension}`
+      const cachedPath = `${cacheFolder}/${msg.id}${suffix}.${soundFileExtension}`
       if (fs.existsSync(cachedPath)) {
         console.log(`==> Using pre-cached ${suffix} audio for msg ${msg.id}`)
         const code = `${msg.id}${suffix}`  // Use deterministic "code" based on ID+suffix
@@ -912,7 +913,7 @@ async function sayPlay (prefix, text, urlPrefix, gather, tempStorage, info) {
     console.log('==> make random clip -', prefix, text)
     // make short random code to avoid collisions
     var code = Math.random().toString(36).substring(2)
-    var audioFilePath = `D:/random_${code}.${soundFileExtension}`
+    var audioFilePath = `${cacheFolder}/random_${code}.${soundFileExtension}`
 
     var mp3Info = await makeAudioFile(text, info, audioFilePath)
     if (mp3Info) {
@@ -972,13 +973,13 @@ async function addToLog (info) {
 }
 
 // async function cleanupOldAudio() {
-//   const files = await fsp.readdir('D:/');
+//   const files = await fsp.readdir('${cacheFolder}/');
 //   const cutoff = dayjs().subtract(7, 'day').valueOf();
 //   for (const file of files) {
 //     if (file.endsWith(`.${soundFileExtension}`)) {
-//       const stats = await fsp.stat(`D:/${file}`);
+//       const stats = await fsp.stat(`${cacheFolder}/${file}`);
 //       if (stats.mtimeMs < cutoff) {
-//         await fsp.unlink(`D:/${file}`);
+//         await fsp.unlink(`${cacheFolder}/${file}`);
 //         console.log(`Deleted old audio file: ${file}`);
 //       }
 //     }
@@ -1003,18 +1004,18 @@ async function preCacheAudio (gmail, msgsCache) {
   try {
     // Process each message
     for (const msg of msgs) {
-      const audioFilePath = `D:/${msg.id}.${soundFileExtension}`;
+      const audioFilePath = `${cacheFolder}/${msg.id}.${soundFileExtension}`;
       if (!fs.existsSync(audioFilePath)) {
         const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed)
         if (txt) {
           console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
-          await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
+          await makeAudioFile(txt, info, audioFilePath); // Generates and writes to ${cacheFolder}/
         }
       }
 
       // From audio
       const fromText = msg.simpleFrom;
-      const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
+      const audioFilePathFrom = `${cacheFolder}/${msg.id}_from.${soundFileExtension}`;
       if (!fs.existsSync(audioFilePathFrom) && fromText) {
         console.log(`Generating from audio for msg ${msg.id}`);
         await makeAudioFile(fromText, info, audioFilePathFrom);
@@ -1023,7 +1024,7 @@ async function preCacheAudio (gmail, msgsCache) {
 
       // Subject audio (add '!' like in getMessageDetail for better intonation)
       const subjectText = fixWords(msg.subject) + '!';
-      const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
+      const audioFilePathSubject = `${cacheFolder}/${msg.id}_subject.${soundFileExtension}`;
       if (!fs.existsSync(audioFilePathSubject) && subjectText) {
         console.log(`Generating subject audio for msg ${msg.id}`);
         await makeAudioFile(subjectText, info, audioFilePathSubject);

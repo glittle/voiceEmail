@@ -8,7 +8,7 @@ const wav = require('wav');
 
 async function testTTS () {
   const text = 'For Soheil! Contact 403-555-0123 at 123 Main St, Calgary.';
-  const audioFilePath = 'D:/test.mp3';
+  const audioFilePath = 'C:\\Data\\TempVoiceEmail\\test.mp3';
   let processedText = text;
   processedText = processedText.replace(/(\d{3})-(\d{3})-(\d{4})/g, '<say-as interpret-as="telephone">$1-$2-$3</say-as>');
   processedText = processedText.replace(/(at \d+ [^,]+, [^,]+, [^,]+)/gi, '<emphasis level="strong">$1</emphasis>');
