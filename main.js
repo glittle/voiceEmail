@@ -38,10 +38,10 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 3.3'
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.4'
 let voiceModel = 'gemini' // aws, gemini
 
-const soundFileExtension = voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
+const soundFileExtension = 'wav' //voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
 const useSSML = false // voiceModel === 'aws' ? true : false // true for aws and google
 
 gmailHelper.setVoiceModel(voiceModel)
@@ -50,19 +50,36 @@ async function makeAudioFile (text, info, audioFilePath) {
   fsp.writeFile(audioFilePath + '.txt', text)
 
   try {
+    // Check if audio file already exists (from pre-caching)
+    if (fs.existsSync(audioFilePath)) {
+      console.log('Audio file already exists, using cached file:', audioFilePath);
+      const audioContent = await fsp.readFile(audioFilePath);
+      const sec = '0'; // Cached, no generation time
+      return {
+        mp3: audioContent,
+        sec,
+        mayHaveTimedOut: false
+      };
+    }
+
     // start timer
     const start = Date.now()
 
-    let mp3
+    let audioContent
 
     switch (voiceModel) {
       case 'gemini':
         console.log(
-          `\n>>>>> Gemini TTS Preview --> making mp3 for clip - ${text.length
+          `\n>>>>> Gemini TTS Preview --> ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         );
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
-        const prompt = `Read this text aloud and clearly, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
+        let processedText = text;
+        processedText = processedText.replace(/(\d{3})-(\d{3})-(\d{4})/g, '<say-as interpret-as="telephone">$1-$2-$3</say-as>');
+        processedText = processedText.replace(/(at \d+ [^,]+, [^,]+, [^,]+)/gi, '<emphasis level="strong">$1</emphasis>');
+        processedText = processedText.replace(/(\.)\s+/g, '$1 <break time="500ms"/> ');
+        const ssmlText = `<speak><prosody rate="75%">${processedText}</prosody></speak>`;
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro-preview-tts' });
+        const prompt = ssmlText;
 
         const result = await model.generateContent({
           contents: [{ parts: [{ text: prompt }] }],
@@ -84,7 +101,7 @@ async function makeAudioFile (text, info, audioFilePath) {
         // Extract base64 PCM from inlineData
         const base64Audio = result.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (!base64Audio) {
-          console.warn('No audio data from Gemini; falling back to AWS Polly');
+          console.warn('No audio data from Gemini; falling back to AWS Polly for', audioFilePath);
           voiceModel = 'aws'; // Fallback to your AWS case
           const fallbackResult = await makeAudioFile(text, info, audioFilePath); // Recursive call
           voiceModel = 'gemini'; // reset back
@@ -97,12 +114,12 @@ async function makeAudioFile (text, info, audioFilePath) {
         writer.write(pcmBuffer);
         writer.end();
         await new Promise((resolve) => writer.on('finish', resolve));
-        mp3 = await fsp.readFile(audioFilePath); // Treat as mp3 for compatibility
+        audioContent = await fsp.readFile(audioFilePath); // Treat as mp3 for compatibility
         //await fsp.unlink(audioFilePath);
         const sec = ((Date.now() - start) / 1000.0).toFixed(1);
-        console.log('------------> seconds to retrieve:', sec, ' length:', mp3.length, 'bytes');
+        console.log('------------> seconds to retrieve:', sec, ' length:', audioContent.length, 'bytes', audioFilePath);
         return {
-          mp3,
+          mp3: audioContent,
           sec,
           mayHaveTimedOut: parseFloat(sec) > 60
         };
@@ -110,7 +127,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       case 'ms':
         // MS Speech
         console.log(
-          `\n>>>>> MS Speech --> making mp3 for clip - ${text.length
+          `\n>>>>> MS Speech --> ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         )
         var serviceRegion = 'centralus'
@@ -124,7 +141,7 @@ async function makeAudioFile (text, info, audioFilePath) {
         // synthesizer.rate = -10
         // synthesizer.Rate = -10
 
-        mp3 = await new Promise((resolve, reject) => {
+        audioContent = await new Promise((resolve, reject) => {
           synthesizer.speakTextAsync(
             text,
             async result => {
@@ -150,42 +167,46 @@ async function makeAudioFile (text, info, audioFilePath) {
 
         break
       case 'aws':
-        // Amazon Polly
-        console.log(
-          `\n>>>>> Amazon Polly --> making mp3 for clip - ${text.length
-          } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
-        )
+        {
+          // Amazon Polly
+          console.log(
+            `\n>>>>> Amazon Polly --> making wav for clip - ${text.length
+            } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
+          )
 
-        const pollyClient = new PollyClient({
-          region: 'us-west-2',
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+          const pollyClient = new PollyClient({
+            region: 'us-west-2',
+            credentials: {
+              accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+            }
+          })
+
+          const params = {
+            // Text: `<speak><prosody rate="x-slow">${text}</prosody></speak>`,
+            Text: text,
+            TextType: 'ssml',
+            OutputFormat: 'pcm',
+            SampleRate: '16000',  // Explicitly set for generative voices (16kHz for PCM)
+            VoiceId: 'Ruth',
+            Engine: 'generative'
           }
-        })
 
-        // slow it down by wrapping the entire text with SSML <speak><prosody rate="x-slow">
-        // text = `<speak><prosody rate="x-slow">${text}</prosody></speak>`
+          const command = new SynthesizeSpeechCommand(params)
+          const data = await pollyClient.send(command)
+          const pcmBuffer = Buffer.from(await data.AudioStream.transformToByteArray())
 
-        const params = {
-          //Text: text,
-          Text: `<speak><prosody rate="x-slow">${text}</prosody></speak>`, // Slows to ~75% speed; adjust as needed (e.g., "slow" or "0.8")
-          TextType: 'ssml',
-          OutputFormat: 'mp3',
-          VoiceId: 'Ruth',
-          Engine: 'generative'
+          // Write WAV directly (add header to PCM)
+          const writer = new wav.FileWriter(audioFilePath, { channels: 1, sampleRate: 16000, bitDepth: 16 })
+          writer.write(pcmBuffer)
+          writer.end()
+          await new Promise((resolve) => writer.on('finish', resolve))
+
+          audioContent = await fsp.readFile(audioFilePath)
+          console.log('------------> length:', audioContent.length, 'bytes', audioFilePath)
         }
-
-        const command = new SynthesizeSpeechCommand(params)
-        const data = await pollyClient.send(command)
-        // Convert AudioStream to Buffer and save to file
-        const audioBuffer = Buffer.from(
-          await data.AudioStream.transformToByteArray()
-        )
-        await fsp.writeFile(audioFilePath, audioBuffer)
-        mp3 = await fsp.readFile(audioFilePath)
-
         break
+
     }
     // Performs the text-to-speech request
 
@@ -257,7 +278,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       '------------> seconds to retrieve:',
       sec,
       ' length:',
-      mp3.length,
+      audioContent.length,
       'bytes'
     )
 
@@ -270,7 +291,7 @@ async function makeAudioFile (text, info, audioFilePath) {
     }
 
     return {
-      mp3: mp3,
+      mp3: audioContent,
       sec: sec,
       mayHaveTimedOut: mayHaveTimedOut
     }
@@ -306,6 +327,16 @@ function sayInstructions (gather) {
                         Press 1 to go to the previous message.
                         Press 0 to repeat these instructions.
                         Hang up at any time to end the call.`)
+}
+
+async function setCurrentMessageLabel (gmail, info, tempStorage) {
+  const msg = info.msgs[info.currentMsgNum];
+  if (msg) {
+    const labelName = tempStorage.labels.find(l => l.id === info.labelId)?.name;
+    if (labelName) {
+      await gmailHelper.setLabel(gmail, msg.id, info.labelId, labelName);
+    }
+  }
 }
 
 async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
@@ -346,6 +377,8 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
       break
 
     case '1':
+      // mark current message as read
+      await setCurrentMessageLabel(gmail, info, tempStorage);
       // go to previous message
       // if (info.currentMsgNum > 0) {
       //     info.currentMsgNum--;
@@ -376,6 +409,8 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
       break
 
     case '3':
+      // mark current message as read
+      await setCurrentMessageLabel(gmail, info, tempStorage);
       // go to next message
       if (info.currentMsgNum < info.msgs.length - 1) {
         info.currentMsgNum++
@@ -394,7 +429,7 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
   return twiml.toString()
 }
 
-/// return final XML text to send or with MP3 audio
+/// return final XML text to send or with audio
 async function respondToCall (query, gmail, api, tempStorage) {
   const twiml = new VoiceResponse()
   sheetsApi = api
@@ -422,7 +457,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
     switch (callStatus) {
       case 'playClip':
         const code = query.c
-        console.log('==>', callStatus, callSid, code)
         var audioFilePath = `D:/${code}.${soundFileExtension}`
         if (fs.existsSync(audioFilePath)) {
           return {
@@ -470,12 +504,12 @@ async function respondToCall (query, gmail, api, tempStorage) {
         info.steps.push(`(msg ${msgIndex})`)
         const msg = info.msgs[msgIndex]
         // console.log('msg', msgId, msgIndex, msg)
-        console.log('>>>>>> GET MP3', query.id, msgIndex) // , info.msgs.map(m => m.id).join(', '));
+        console.log('>>>>>> GET Audio', query.id, msgIndex) // , info.msgs.map(m => m.id).join(', '));
 
         let mayHaveTimedOut = false
         var mp3 = msg.mp3
         if (mp3) {
-          console.log('>>>>>> mp3 already exists', mp3.length, 'bytes')
+          console.log('>>>>>> audio content already exists', mp3.length, 'bytes')
         } else {
           // convert text to MP3
           // var txt = msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;') // GOOGLE
@@ -484,7 +518,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
             ? msg.bodyDetails.textForSpeech?.replace(/&/g, '&amp;')
             : msg.bodyDetails.text
 
-          console.log('>>>>>> creating MP3 from text', txt?.length, 'chars')
+          console.log('>>>>>> creating audio from text', txt?.length, 'chars')
           if (!txt || txt.trim().length === 0) {
             console.warn('There was no text to convert to MP3!')
             twiml.say(`There appears to be no text in this message.`)
@@ -509,15 +543,6 @@ async function respondToCall (query, gmail, api, tempStorage) {
 
         console.log('==> SENDING MP3', '#', msgIndex, mp3.length, 'bytes')
 
-        if (!mayHaveTimedOut) {
-          // all seems good - mark message as read
-          // get label name
-          const labelName = tempStorage.labels.find(
-            l => l.id === info.labelId
-          )?.name
-          gmailHelper.setLabel(gmail, msg.id, info.labelId, labelName)
-        }
-
         info.mp3StartMs = new Date().getTime()
 
         return {
@@ -529,6 +554,9 @@ async function respondToCall (query, gmail, api, tempStorage) {
       case 'completed':
         // the call is over
         twiml.say(`Bye!`)
+
+        // mark current message as read
+        await setCurrentMessageLabel(gmail, info, tempStorage);
 
         // add a row to the spreadsheet
         //CallStart	Phone	Name	SID	Log
@@ -574,13 +602,13 @@ async function respondToCall (query, gmail, api, tempStorage) {
     // if (Array.isArray(callerNumRaw)) {
     //     // sometimes is an array!?
     //     callerNumRaw = callerNumRaw[0];
-    // }
+    //}
 
+    console.log('------------ CALL STARTED ---------------------------')
     console.log(
       'callerNumRaw',
       typeof callerNumRaw,
       callerNumRaw,
-      ' ------------------ CALL STARTED -------------------------------------'
     )
 
     // reformat caller number from +1xxxxxxxxxx to xxx-xxx-xxxx
@@ -825,7 +853,7 @@ async function playMessage (gather, info, query, tempStorage) {
 
   if (!skip) {
     // gather.say(msg.bodyText);
-    gather.play(msg.bodyUrl)
+    gather.play(urlPrefix + msg.id)
     gather.play({ digits: 'ww' }) // pause for a second
 
     // Label the message as read after queuing the body playback
@@ -953,7 +981,7 @@ async function addToLog (info) {
 //   }
 // }
 
-async function preCacheAudio (gmail) {
+async function preCacheAudio (gmail, msgsCache) {
 
   // await cleanupOldAudio();
 
@@ -964,8 +992,8 @@ async function preCacheAudio (gmail) {
   const rawMsgs = await gmailHelper.getMessages(gmail, '_Welcome', false); // false for full fetch
   console.log(`Found ${rawMsgs.length} messages to process.`);
 
-  // Load message details (reuse loadMessages; pass empty {} for tempStorage.msgs)
-  const msgs = await gmailHelper.loadMessages(gmail, rawMsgs, {}, '');
+  // Load message details (reuse loadMessages; pass msgsCache to populate tempStorage.msgs)
+  const msgs = await gmailHelper.loadMessages(gmail, rawMsgs, msgsCache, '');
   const info = { completed: false }; // Dummy info for makeAudioFile
 
   // Process each message

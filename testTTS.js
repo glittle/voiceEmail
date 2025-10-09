@@ -6,11 +6,16 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const fsp = require('fs').promises;
 const wav = require('wav');
 
-async function testTTS() {
+async function testTTS () {
   const text = 'For Soheil! Contact 403-555-0123 at 123 Main St, Calgary.';
   const audioFilePath = 'D:/test.mp3';
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-tts' });
-  const prompt = `Read this text aloud slowly and clearly at 75% speed, pausing after sentences. Say phone numbers digit by digit (e.g., "four zero three five five five zero one two three" for 403-555-0123). Emphasize addresses (e.g., "one two three Main Street, Calgary, Alberta"). Text: "${text}"`;
+  let processedText = text;
+  processedText = processedText.replace(/(\d{3})-(\d{3})-(\d{4})/g, '<say-as interpret-as="telephone">$1-$2-$3</say-as>');
+  processedText = processedText.replace(/(at \d+ [^,]+, [^,]+, [^,]+)/gi, '<emphasis level="strong">$1</emphasis>');
+  processedText = processedText.replace(/(\.)\s+/g, '$1 <break time="500ms"/> ');
+  const ssmlText = `<speak><prosody rate="75%">${processedText}</prosody></speak>`;
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-pro-preview-tts' });
+  const prompt = ssmlText;
 
   const result = await model.generateContent({
     contents: [{ parts: [{ text: prompt }] }],

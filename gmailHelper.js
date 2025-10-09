@@ -125,7 +125,7 @@ async function getMessageDetail (gmail, rawMsg, msgsCache, urlPrefix) {
   var cached = msgsCache[id]
   if (cached) {
     cached.dateAge = cached.date.tz('America/Edmonton').fromNow()
-    console.log('X got email from cache', id, cached.dateAge, cached.subject)
+    console.log('   got email from cache', id, cached.dateAge, cached.subject)
     return cached
   }
 

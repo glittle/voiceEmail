@@ -103,7 +103,22 @@ app.get('/', async (req, res) => {
     console.log('| GET', callCount++, new Date().toLocaleString(), req.method)
     console.log('|')
     var params = req.query
-    console.log('| PATH', params)
+    console.log('| CallSid', params.CallSid)
+    if (params.CallStatus) {
+      console.log('| CallStatus', params.CallStatus)
+    }
+    if (params.Digits) {
+      console.log('| Digits', params.Digits)
+    }
+    if (params.c) {
+      console.log('| Clip', params.c)
+    }
+    if (params.CallbackSource) {
+      console.log('| CallbackSource', params.CallbackSource)
+    }
+    console.log('|')
+
+    // console.log('| PATH', params)
     // console.log('GET', params);
     processIncoming(params, res)
   } catch (error) {
@@ -122,10 +137,8 @@ async function processIncoming (params, res) {
 
     if (final.file) {
       res.sendFile(final.file)
-      console.log('==> sent audio file')
     } else {
       res.send(final.audio)
-      console.log('==> sent audio bytes')
     }
     return
   }
@@ -138,7 +151,7 @@ async function processIncoming (params, res) {
 var tempStorage = {
   calls: {}, // details of each call
   msgs: {}, // the messages that have been processed
-  clips: [], // mp3 clips for "from" and "subject"
+  clips: [], // audio clips for "from" and "subject"
   labels: [] // the known labels in this gmail account
 }
 var callCount = 0
@@ -193,7 +206,7 @@ async function runPreCacheAudio (gmail) {
   }
   console.log('Running pre-caching...');
   try {
-    await preCacheAudio(gmail);
+    await preCacheAudio(gmail, tempStorage.msgs);
     console.log('Pre-caching completed.');
   } catch (error) {
     console.error('Pre-caching failed:', error);
@@ -220,6 +233,9 @@ async function runPreCacheAudio (gmail) {
 
 // Start the server
 let server = app.listen(app.get('port'), function () {
+  console.log('|')
+  console.log('|')
+  console.log('|')
   console.log('|')
   console.log(
     'App started. Listening on port %s at %s',
