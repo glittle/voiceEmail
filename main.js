@@ -296,7 +296,11 @@ async function makeAudioFile (text, info, audioFilePath) {
       mayHaveTimedOut: mayHaveTimedOut
     }
   } catch (err) {
-    console.log('error A', err)
+    // If quota error, abort pre-caching by re-throwing
+    if (err.message && (err.message.includes('quota') || err.message.includes('429') || err.message.includes('Too Many Requests'))) {
+      throw err;
+    }
+    console.error('error A', err.message || err);
     return null
   }
 }
@@ -996,36 +1000,39 @@ async function preCacheAudio (gmail, msgsCache) {
   const msgs = await gmailHelper.loadMessages(gmail, rawMsgs, msgsCache, '');
   const info = { completed: false }; // Dummy info for makeAudioFile
 
-  // Process each message
-  for (const msg of msgs) {
-    const audioFilePath = `D:/${msg.id}.${soundFileExtension}`;
-    if (!fs.existsSync(audioFilePath)) {
-      const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed)
-      if (txt) {
-        console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
-        await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
+  try {
+    // Process each message
+    for (const msg of msgs) {
+      const audioFilePath = `D:/${msg.id}.${soundFileExtension}`;
+      if (!fs.existsSync(audioFilePath)) {
+        const txt = msg.bodyDetails.text; // Use text (or textForSpeech if needed)
+        if (txt) {
+          console.log(`Generating audio for msg ${msg.id} (${txt.length} chars)`);
+          await makeAudioFile(txt, info, audioFilePath); // Generates and writes to D:/
+        }
       }
-    }
 
-    // From audio
-    const fromText = msg.simpleFrom;
-    const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
-    if (!fs.existsSync(audioFilePathFrom) && fromText) {
-      console.log(`Generating from audio for msg ${msg.id}`);
-      await makeAudioFile(fromText, info, audioFilePathFrom);
-    }
-    msg.fromUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_from`;
+      // From audio
+      const fromText = msg.simpleFrom;
+      const audioFilePathFrom = `D:/${msg.id}_from.${soundFileExtension}`;
+      if (!fs.existsSync(audioFilePathFrom) && fromText) {
+        console.log(`Generating from audio for msg ${msg.id}`);
+        await makeAudioFile(fromText, info, audioFilePathFrom);
+      }
+      msg.fromUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_from`;
 
-    // Subject audio (add '!' like in getMessageDetail for better intonation)
-    const subjectText = fixWords(msg.subject) + '!';
-    const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
-    if (!fs.existsSync(audioFilePathSubject) && subjectText) {
-      console.log(`Generating subject audio for msg ${msg.id}`);
-      await makeAudioFile(subjectText, info, audioFilePathSubject);
+      // Subject audio (add '!' like in getMessageDetail for better intonation)
+      const subjectText = fixWords(msg.subject) + '!';
+      const audioFilePathSubject = `D:/${msg.id}_subject.${soundFileExtension}`;
+      if (!fs.existsSync(audioFilePathSubject) && subjectText) {
+        console.log(`Generating subject audio for msg ${msg.id}`);
+        await makeAudioFile(subjectText, info, audioFilePathSubject);
+      }
+      msg.subjectUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_subject`;
     }
-    msg.subjectUrl = `https://wondrous-badi.today/voiceEmail?CallStatus=playClip&c=${msg.id}_subject`;
+  } catch (err) {
+    console.error('Pre-caching audio error:', err.message || err);
   }
-
 }
 
 

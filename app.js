@@ -204,13 +204,7 @@ async function runPreCacheAudio (gmail) {
     console.log('Skipping pre-caching: Active call(s) detected.');
     return;
   }
-  console.log('Running pre-caching...');
-  try {
-    await preCacheAudio(gmail, tempStorage.msgs);
-    console.log('Pre-caching completed.');
-  } catch (error) {
-    console.error('Pre-caching failed:', error);
-  }
+  await preCacheAudio(gmail, tempStorage.msgs);
 }
 
 // Schedule pre-caching
