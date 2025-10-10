@@ -39,7 +39,7 @@ const {
 
 var sheetsApi
 
-const VERSION_NUM = 'Welcome to "Voice Email" version 3.4'
+const VERSION_NUM = 'Welcome to "Voice Email" version 3.5'
 let voiceModel = 'gemini' // aws, gemini
 
 const soundFileExtension = 'wav' //voiceModel === 'ms' || voiceModel === 'gemini' ? 'wav' : 'mp3' // ms uses .WAV and aws uses .mp3
@@ -369,7 +369,7 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
   // var msg = info.msgs[0];
 
   const gather = twiml.gather({
-    timeout: 30,
+    timeout: 0, // wait indefinitely for DTMF input
     numDigits: 1,
     input: 'dtmf',
     action: query.PATH, // drop the original query string
@@ -385,28 +385,25 @@ async function handleOngoingCall (gmail, query, twiml, info, tempStorage) {
       // mark current message as read
       await setCurrentMessageLabel(gmail, info, tempStorage);
       // go to previous message
-      // if (info.currentMsgNum > 0) {
-      //     info.currentMsgNum--;
-      //     await playMessage(gather, info, query, tempStorage);
-      // } else if (info.isDevCaller) {
-      // try to get an older message
-      const foundOlderMsg = await gmailHelper.getOlderMessage(
-        gmail,
-        info.msgs,
-        tempStorage.msgs,
-        info.urlPrefix
-      )
-      if (foundOlderMsg) {
-        info.currentMsgNum = 0
-        await playMessage(gather, info, query, tempStorage)
+      if (info.currentMsgNum > 0) {
+        info.currentMsgNum--;
+        await playMessage(gather, info, query, tempStorage);
       } else {
-        gather.say(`No more messages.`)
-        sayInstructions(gather)
+        // try to get an older message
+        const foundOlderMsg = await gmailHelper.getOlderMessage(
+          gmail,
+          info.msgs,
+          tempStorage.msgs,
+          info.urlPrefix
+        )
+        if (foundOlderMsg) {
+          info.currentMsgNum = 0
+          await playMessage(gather, info, query, tempStorage)
+        } else {
+          gather.say(`No more messages.`)
+          sayInstructions(gather)
+        }
       }
-      // } else {
-      //     gather.say(`No more messages.`);
-      //     sayInstructions(gather);
-      // }
       break
 
     case '2':

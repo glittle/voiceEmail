@@ -71,13 +71,13 @@ async function getOlderMessage (gmail, msgs, msgsCache, urlPrefix) {
   console.log('getting old', msgs.length)
 
   var timeOfEarliestKnownEmail = msgs.length
-    ? Math.floor(msgs[0].date.valueOf() / 1000)
-    : Math.floor(new Date().getTime() / 1000)
+    ? dayjs(msgs[0].date).format('YYYY/MM/DD')
+    : dayjs().format('YYYY/MM/DD')
 
   const res2 = await gmail.users.messages.list({
     userId: 'me',
     q: `in:inbox before:${timeOfEarliestKnownEmail}`,
-    maxResults: 1
+    maxResults: 10
   })
   console.log('res2', res2.data)
 
@@ -87,15 +87,26 @@ async function getOlderMessage (gmail, msgs, msgsCache, urlPrefix) {
     return 0
   }
 
-  var newMsg = await getMessageDetail(
-    gmail,
-    oldMsgList[0],
-    msgsCache,
-    urlPrefix
-  )
-  msgs.unshift(newMsg)
+  let addedCount = 0
+  for (let i = oldMsgList.length - 1; i >= 0; i--) {
+    const msg = oldMsgList[i]
+    var newMsg = await getMessageDetail(
+      gmail,
+      msg,
+      msgsCache,
+      urlPrefix
+    )
 
-  return 1
+    // Check if the message is already in the list
+    if (msgs.some(m => m.id === newMsg.id)) {
+      continue
+    }
+
+    msgs.unshift(newMsg)
+    addedCount++
+  }
+
+  return addedCount > 0 ? 1 : 0
 }
 
 // get the body of the messages
