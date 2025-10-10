@@ -1,0 +1,68 @@
+8|Voice Email  | App listening on port 8008 at 9/25/2025, 11:04:45 PM
+8|Voice Email  | Starting initial email check and audio pre-caching at 9/25/2025, 11:04:45 PM
+8|Voice Email  | Running pre-caching...
+8|Voice Email  | Pre-caching audio for inbox emails...
+8|Voice Email  | res1 { resultSizeEstimate: 0 }
+8|Voice Email  | Found 0 welcome msg(s) in 481 ms
+8|Voice Email  | res2 {
+8|Voice Email  |   messages: [
+8|Voice Email  |     { id: '1998435fc99e253e', threadId: '1993b5901efaea47' },
+8|Voice Email  |     { id: '199812dff4a10b5a', threadId: '199812dff4a10b5a' },
+8|Voice Email  |     { id: '1997c8280b61b459', threadId: '1997c8280b61b459' },
+8|Voice Email  |     { id: '19979bd8fe84fa5e', threadId: '19979bd8fe84fa5e' },
+8|Voice Email  |     { id: '1997707642d679ce', threadId: '1997707642d679ce' },
+8|Voice Email  |     { id: '19976ef6192b778f', threadId: '19976ef6192b778f' },
+8|Voice Email  |     { id: '1995e8081f973095', threadId: '1995de25fb1277c3' },
+8|Voice Email  |     { id: '1995de25fb1277c3', threadId: '1995de25fb1277c3' },
+8|Voice Email  |     { id: '1995d8d2cbe2e1c3', threadId: '1995d8d2cbe2e1c3' }
+8|Voice Email  |   ],
+8|Voice Email  |   resultSizeEstimate: 9
+8|Voice Email  | }
+8|Voice Email  | Found 9 total message(s) in 200 ms
+8|Voice Email  | Found 9 messages to process.
+8|Voice Email  | rawMsg { id: '1998435fc99e253e', threadId: '1993b5901efaea47' }
+8|Voice Email  | get message 1998435fc99e253e
+8|Voice Email  | rawMsg { id: '199812dff4a10b5a', threadId: '199812dff4a10b5a' }
+8|Voice Email  | get message 199812dff4a10b5a
+8|Voice Email  | rawMsg { id: '1997c8280b61b459', threadId: '1997c8280b61b459' }
+8|Voice Email  | get message 1997c8280b61b459
+8|Voice Email  | rawMsg { id: '19979bd8fe84fa5e', threadId: '19979bd8fe84fa5e' }
+8|Voice Email  | get message 19979bd8fe84fa5e
+8|Voice Email  | rawMsg { id: '1997707642d679ce', threadId: '1997707642d679ce' }
+8|Voice Email  | get message 1997707642d679ce
+8|Voice Email  | rawMsg { id: '19976ef6192b778f', threadId: '19976ef6192b778f' }
+8|Voice Email  | get message 19976ef6192b778f
+8|Voice Email  | rawMsg { id: '1995e8081f973095', threadId: '1995de25fb1277c3' }
+8|Voice Email  | get message 1995e8081f973095
+8|Voice Email  | rawMsg { id: '1995de25fb1277c3', threadId: '1995de25fb1277c3' }
+8|Voice Email  | get message 1995de25fb1277c3
+8|Voice Email  | rawMsg { id: '1995d8d2cbe2e1c3', threadId: '1995d8d2cbe2e1c3' }
+8|Voice Email  | get message 1995d8d2cbe2e1c3
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: Southern Alberta Teaching Conference Registration
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [north] Correction to Time: Feast of Mashiyyat - September 25
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [north] Reminder - Feast of Mashiyyat - September 25
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: New version
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [north] Re: Day of the Covenant Holy Day - Assistance Required
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [north] Feast of Mashiyyat - September 25
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [north] Re: Correction to Time: Feast of Mashiyyat - September 25
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [calgary-bahais] Volunteer Work Weekend @ Sylvan Lake Baha'i Centre Oct 3 - 5th
+8|Voice Email  | ====================
+8|Voice Email  | get email Subject: [calgary-bahais] Feast Report - Will/Mashíyyat, Thursday/Friday, Sept. 25/26 2025
+8|Voice Email  | Audio already exists for msg 1995d8d2cbe2e1c3
+8|Voice Email  | Audio already exists for msg 1995de25fb1277c3
+8|Voice Email  | Audio already exists for msg 1995e8081f973095
+8|Voice Email  | Audio already exists for msg 19976ef6192b778f
+8|Voice Email  | Audio already exists for msg 1997707642d679ce
+8|Voice Email  | Audio already exists for msg 19979bd8fe84fa5e
+8|Voice Email  | Audio already exists for msg 1997c8280b61b459
+8|Voice Email  | Audio already exists for msg 199812dff4a10b5a
+8|Voice Email  | Audio already exists for msg 1998435fc99e253e
+8|Voice Email  | Pre-caching completed.

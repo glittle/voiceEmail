@@ -61,8 +61,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       case 'ms':
         // MS Speech
         console.log(
-          `\n>>>>> MS Speech --> making mp3 for clip - ${
-            text.length
+          `\n>>>>> MS Speech --> making mp3 for clip - ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         )
         var serviceRegion = 'centralus'
@@ -102,8 +101,7 @@ async function makeAudioFile (text, info, audioFilePath) {
       case 'aws':
         // Amazon Polly
         console.log(
-          `\n>>>>> Amazon Polly --> making mp3 for clip - ${
-            text.length
+          `\n>>>>> Amazon Polly --> making mp3 for clip - ${text.length
           } chars - ${text.replace(/\n/g, ' ').substr(0, 100)}...`
         )
 
@@ -641,7 +639,7 @@ async function respondToCall (query, gmail, api, tempStorage) {
     twiml.say(`Hello ${info.name}.`)
 
     // announce the version number
-    twiml.say(`Welcome to "Voice Email" version 2.6. `)
+    twiml.say(`Welcome to "Voice Email" version 2.6 A. `)
 
     // twiml.say('Please note that this system is being adjusted and may not work correctly. Please try again later.');
 
@@ -751,8 +749,7 @@ async function playMessage (gather, info, query, tempStorage) {
 
   if (msg.numAttachments) {
     gather.say(
-      `with ${msg.numAttachments} attachment${
-        msg.numAttachments === 1 ? '' : 's'
+      `with ${msg.numAttachments} attachment${msg.numAttachments === 1 ? '' : 's'
       }.`
     )
   }
